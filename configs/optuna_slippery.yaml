@@ -14,6 +14,12 @@ optuna:
   eval_every: 1000
   inv_samples: 1024
   collect_steps: 20000
+  refit_best: true
+  refit_train_steps: 20000
+  refit_collect_steps: 40000
+  refit_num_envs: 256
+  refit_batch_size: 256
+  refit_inv_samples: 2048
   num_envs: 128
   batch_size: 256
   search_space:
