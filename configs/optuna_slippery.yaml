@@ -1,5 +1,5 @@
 optuna:
-  study_name: ti_optuna_slippery
+  study_name: ti_optuna_slippery_rainbowlite
   n_trials: 50
   sampler: tpe
   n_startup_trials: 5
