@@ -4,6 +4,7 @@ from collections import deque
 from contextlib import nullcontext
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 import torch
 
@@ -66,7 +67,40 @@ def _update_rep(learner, buf, batch_size, device, use_amp, amp_dtype):
     return float(loss.item())
 
 
-def run_online_training(cfg, env_id, method, seed, alpha, output_dir):
+def _auc_success_from_logs(logs):
+    if not logs:
+        return 0.0
+    steps = np.array([r.env_step for r in logs], dtype=np.float64)
+    success = np.array([r.success for r in logs], dtype=np.float64)
+    if steps.size < 2:
+        return float(success.mean())
+    cum_success = np.cumsum(success) / np.arange(1, len(success) + 1)
+    if hasattr(np, "trapezoid"):
+        return float(np.trapezoid(cum_success, steps))
+    return float(np.trapz(cum_success, steps))
+
+
+def _metric_from_logs(logs, metric):
+    if not logs:
+        return 0.0
+    if metric == "final_success":
+        window = logs[-100:] if len(logs) >= 100 else logs
+        return float(sum(r.success for r in window) / float(len(window)))
+    return _auc_success_from_logs(logs)
+
+
+def run_online_training(
+    cfg,
+    env_id,
+    method,
+    seed,
+    alpha,
+    output_dir,
+    trial=None,
+    prune_metric="auc_success",
+    prune_every=None,
+    prune_min_steps=0,
+):
     runtime = cfg["runtime"]
     methods_cfg = cfg["methods"]
     online_cfg = dict(
@@ -334,6 +368,17 @@ def run_online_training(cfg, env_id, method, seed, alpha, output_dir):
                 f"{steps_per_sec:.1f} steps/s ETA {eta/60:.1f}m",
                 flush=True,
             )
+
+        if trial is not None and prune_every:
+            if step >= int(prune_min_steps) and (step % int(prune_every) == 0 or step == total_steps):
+                value = _metric_from_logs(logs, prune_metric)
+                trial.report(value, step)
+                try:
+                    import optuna
+                except Exception:
+                    optuna = None
+                if optuna is not None and trial.should_prune():
+                    raise optuna.TrialPruned()
 
     runtime_s = time.time() - start_time
 

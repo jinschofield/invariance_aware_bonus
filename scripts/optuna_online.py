@@ -67,8 +67,20 @@ def objective_factory(cfg, opt_cfg):
         out_dir = os.path.join(runtime.get("output_dir", "outputs"), "runs", "optuna_online")
         ensure_dir(out_dir)
 
+        prune_every = int(opt_cfg.get("prune_every", max(1000, n_steps // 10)))
+        prune_min_steps = int(opt_cfg.get("prune_min_steps", max(1000, n_steps // 5)))
+
         out_csv, _ = run_online_training(
-            trial_cfg, env_id, method, seed_base + trial.number, alpha, out_dir
+            trial_cfg,
+            env_id,
+            method,
+            seed_base + trial.number,
+            alpha,
+            out_dir,
+            trial=trial,
+            prune_metric=metric,
+            prune_every=prune_every,
+            prune_min_steps=prune_min_steps,
         )
         df = pd.read_csv(out_csv)
 
@@ -106,15 +118,29 @@ def main():
     ensure_dir(os.path.dirname(storage_path))
     storage = f"sqlite:///{storage_path}"
 
+    pruner_kind = opt_cfg.get("pruner", "median").lower()
+    if pruner_kind == "hyperband":
+        pruner = optuna.pruners.HyperbandPruner()
+    else:
+        pruner = optuna.pruners.MedianPruner(
+            n_startup_trials=int(opt_cfg.get("pruner_startup_trials", 5)),
+            n_warmup_steps=int(opt_cfg.get("prune_min_steps", 0)),
+            interval_steps=1,
+        )
+
     study = optuna.create_study(
         study_name=study_name,
         direction=opt_cfg.get("direction", "maximize"),
         storage=storage,
         load_if_exists=True,
+        pruner=pruner,
     )
 
     objective = objective_factory(cfg, opt_cfg)
-    study.optimize(objective, n_trials=int(opt_cfg.get("n_trials", 20)), catch=(Exception,))
+    catch = ()
+    if runtime.get("continue_on_error", False):
+        catch = (RuntimeError, ValueError)
+    study.optimize(objective, n_trials=int(opt_cfg.get("n_trials", 20)), catch=catch)
 
     best = {
         "value": float(study.best_value),

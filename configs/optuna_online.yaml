@@ -7,6 +7,10 @@ optuna:
   method: CRTR
   metric: auc_success
   total_steps: 50000
+  pruner: median
+  prune_every: 5000
+  prune_min_steps: 10000
+  pruner_startup_trials: 5
 
   search_space:
     alpha: [0.05, 2.0]
