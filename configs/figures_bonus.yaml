@@ -1,0 +1,27 @@
+figures:
+  elliptical_heatmaps:
+    generator: elliptical_heatmaps
+    title: Elliptical bonus heatmaps
+    envs: [periodicity, slippery, teacup]
+    crtr_rep_list: [1, 2, 4, 8, 16, 32, 64]
+
+  fig05_bonus_invariance:
+    generator: bonus_invariance
+    title: Bonus invariance
+    envs: [Periodicity, Slippery, Teacup Maze]
+
+  fig10_corr_repr_vs_bonus:
+    generator: corr_repr_vs_bonus
+    title: Correlation between representation and bonus invariance
+    metric_x: inv
+    metric_y: orbit_ratio_W_over_B
+
+  fig11_teacup_analysis:
+    generator: teacup_analysis
+    title: Teacup analysis
+
+  teacup_elliptical_only:
+    generator: teacup_elliptical_only
+    title: Teacup elliptical scalars
+    envs: [teacup]
+    crtr_rep_list: [1, 2, 4, 8, 16, 32, 64]

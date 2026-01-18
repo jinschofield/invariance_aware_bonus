@@ -5,3 +5,7 @@ seaborn
 pandas
 pyyaml
 optuna
+tqdm
+scikit-learn
+scipy
+tueplots

@@ -8,13 +8,16 @@ pip install -r requirements.txt
 python scripts/run_figures.py --config configs/paper.yaml
 ```
 
-## Colab
-```
-!pip install -r requirements.txt
-!pip install -e .
-```
+## Colab / multi‑GPU
+Use the split notebooks to run on 3 GPUs in parallel (each mounts Google Drive and writes outputs there):
+- `notebooks/01_rep_figures.ipynb` (GPU 0)
+- `notebooks/02_bonus_figures.ipynb` (GPU 1)
+- `notebooks/03_online_figures.ipynb` (GPU 2)
 
-Then open `notebooks/icml_figures.ipynb` and run the cells. The notebook only calls into the Python modules.
+Each notebook calls `scripts/run_figures.py` with a Drive‑based config:
+- `configs/colab_drive_rep.yaml`
+- `configs/colab_drive_bonus.yaml`
+- `configs/colab_drive_online.yaml`
 
 ## Outputs
 - Figures: `outputs/figures/<run_id>/`
@@ -27,6 +30,7 @@ Then open `notebooks/icml_figures.ipynb` and run the cells. The notebook only ca
 - `configs/envs.yaml` defines the three environments (Periodicity, Slippery, Teacup)
 - `configs/methods.yaml` defines training/probe/elliptical settings
 - `configs/figures.yaml` controls figure generation order
+- `configs/figures_rep.yaml`, `configs/figures_bonus.yaml`, `configs/figures_online.yaml` split the figure lineup
 
 ## Caching and checkpoints
 - Datasets are cached under `outputs/cache/` when `runtime.cache_datasets=true`.
@@ -43,4 +47,9 @@ Then open `notebooks/icml_figures.ipynb` and run the cells. The notebook only ca
 ## Optuna (hyperparameter search)
 ```
 python scripts/optuna_search.py --config configs/paper.yaml --optuna-config configs/optuna.yaml
+```
+
+## Online RL
+```
+python scripts/run_online_rl.py --config configs/paper.yaml --env periodicity --method CRTR --alpha 1.0 --seed 0
 ```

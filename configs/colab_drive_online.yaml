@@ -1,0 +1,33 @@
+runtime:
+  seed: 0
+  device: null
+  output_dir: /content/drive/MyDrive/temporal_invariance/outputs
+  cache_dir: /content/drive/MyDrive/temporal_invariance/outputs/cache
+  deterministic: true
+  cache_datasets: true
+  save_config_snapshot: true
+  continue_on_error: false
+  checkpoint_every: 2000
+  losses_flush_every: 200
+  allow_tf32: true
+  matmul_precision: high
+  compile: false
+  compile_mode: max-autotune
+  use_amp: true
+  amp_dtype: bf16
+  resume: true
+  auto_zip: false
+  throughput_mode: rl_only
+  rl_profile:
+    deterministic: false
+    compile: true
+    compile_mode: max-autotune
+    allow_tf32: true
+    matmul_precision: high
+    use_amp: true
+    amp_dtype: bf16
+
+includes:
+  envs: envs.yaml
+  methods: methods.yaml
+  figures: figures_online.yaml

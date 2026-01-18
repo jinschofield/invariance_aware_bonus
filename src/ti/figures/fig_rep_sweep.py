@@ -96,6 +96,7 @@ def run(cfg, fig_id, fig_spec):
             row = {
                 "env": env_name,
                 "method": method_name,
+                "seed": int(runtime["seed"]),
                 "nuis_acc": float(nuisance_acc),
                 "nuis_mi": float(nuisance_mi),
                 "inv": float(inv),

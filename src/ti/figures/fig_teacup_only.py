@@ -294,6 +294,7 @@ def run(cfg, fig_id, fig_spec):
 
         scal["env"] = env_name
         scal["method"] = mname
+        scal["seed"] = int(runtime["seed"])
         scal["bonus_nuis_acc"] = float(bacc)
         scal["bonus_nuis_mi"] = float(bmi)
         rows.append(scal)

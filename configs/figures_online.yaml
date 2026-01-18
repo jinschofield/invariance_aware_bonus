@@ -1,0 +1,30 @@
+figures:
+  fig03_end2end:
+    generator: end2end
+    title: End-to-end invariance
+    env: periodicity
+    method_a: CRTR
+    method_b: ICM
+    alpha: 1.0
+    profile: rl
+
+  fig06_convergence:
+    generator: convergence
+    title: Accelerated convergence
+    env: periodicity
+    methods: [CRTR, ICM, RND]
+    alpha: 1.0
+    profile: rl
+
+  fig12_hparam_sweep:
+    generator: hparam_sweep
+    title: Hyperparameter sweep
+    env: periodicity
+    method: CRTR
+    profile: rl
+
+  fig07_spearman:
+    generator: spearman
+    title: Spearman correlation
+    metric: orbit_ratio_W_over_B
+    profile: rl

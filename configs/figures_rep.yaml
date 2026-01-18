@@ -1,0 +1,42 @@
+figures:
+  fig02_envs:
+    generator: envs_overview
+    title: Environments
+
+  fig01_tsne:
+    generator: tsne
+    title: t-SNE invariance collapse
+    env: periodicity
+    method_a: CRTR_R8
+    method_b: ICM
+    num_positions: 200
+    num_nuisances: 8
+
+  rep_sweep:
+    generator: rep_sweep
+    title: Representation sweep
+    envs: [periodicity, slippery, teacup]
+    crtr_rep_list: [1, 2, 4, 8, 16, 32, 64]
+    inv_samples: 2048
+
+  fig04_repr_invariance:
+    generator: repr_invariance
+    title: Representational invariance
+    envs: [periodicity, slippery, teacup]
+
+  fig09_rep_factor_sweep:
+    generator: rep_factor_sweep
+    title: Repetition factor sweep
+    envs: [periodicity, slippery, teacup]
+    metric: inv
+
+  fig08_crtr_over_time:
+    generator: crtr_over_time
+    title: CRTR convergence over time
+    env: periodicity
+    steps: [0, 1000, 2000, 4000, 6000, 8000, 10000, 15000, 20000]
+
+  fig13_xy_regression:
+    generator: xy_regression
+    title: XY regression error
+    envs: [periodicity, slippery, teacup]
