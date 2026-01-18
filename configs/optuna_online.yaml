@@ -1,0 +1,18 @@
+optuna:
+  study_name: ti_online_optuna
+  direction: maximize
+  n_trials: 20
+
+  env_id: periodicity
+  method: CRTR
+  metric: auc_success
+  total_steps: 50000
+
+  search_space:
+    alpha: [0.05, 2.0]
+    bonus_beta: [0.1, 2.0]
+    bonus_lambda: [0.1, 2.0]
+    q_lr: [1.0e-4, 5.0e-4]
+    eps_decay_steps: [30000, 150000]
+    rep_update_every: [1, 6]
+    update_every: [2, 8]

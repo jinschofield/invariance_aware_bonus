@@ -49,6 +49,12 @@ Each notebook calls `scripts/run_figures.py` with a Drive‑based config:
 python scripts/optuna_search.py --config configs/paper.yaml --optuna-config configs/optuna.yaml
 ```
 
+## Optuna (online RL)
+```
+python scripts/optuna_online.py --config configs/paper.yaml --optuna-config configs/optuna_online.yaml
+```
+Best params are saved to `outputs/runs/optuna_online/best_params.json`.
+
 ## Online RL
 ```
 python scripts/run_online_rl.py --config configs/paper.yaml --env periodicity --method CRTR --alpha 1.0 --seed 0
