@@ -6,7 +6,7 @@ class EpisodicEllipticalBonus:
         self.z_dim = int(z_dim)
         self.n_actions = int(n_actions)
         self.beta = float(beta)
-        self.lam = float(lam)
+        self.lam = max(float(lam), 1e-3)
         self.num_envs = int(num_envs)
         self.device = device
 

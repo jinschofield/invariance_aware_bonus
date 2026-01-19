@@ -71,11 +71,16 @@ methods:
     sac_hard_target: false
     sac_alpha_max: 10.0
     sac_use_epsilon: false
+    sac_max_grad_norm: 10.0
     eps_start: 1.0
     eps_end: 0.05
     eps_decay_steps: 100000
     bonus_lambda: 1.0
     bonus_beta: 1.0
+    bonus_clip: 5.0
+    bonus_norm: true
+    bonus_norm_beta: 0.99
+    bonus_norm_eps: 1.0e-4
     alpha_list: [0.0, 0.1, 0.3, 1.0, 3.0]
     cbm_warmup_steps: 5000
     cbm_update_every: 50000

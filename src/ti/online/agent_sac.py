@@ -54,6 +54,7 @@ class DiscreteSACAgent:
         entropy_autotune,
         target_entropy_ratio,
         alpha_max,
+        max_grad_norm,
         device,
     ):
         self.n_actions = int(n_actions)
@@ -80,6 +81,7 @@ class DiscreteSACAgent:
 
         self.target_entropy = float(np.log(self.n_actions) * float(target_entropy_ratio))
         self.alpha_max = float(alpha_max) if alpha_max is not None else None
+        self.max_grad_norm = float(max_grad_norm) if max_grad_norm else None
         if self.autotune:
             init = float(entropy_alpha)
             self.log_alpha = torch.nn.Parameter(
@@ -138,6 +140,11 @@ class DiscreteSACAgent:
         q_loss = F.mse_loss(q1, target) + F.mse_loss(q2, target)
         self.q_opt.zero_grad(set_to_none=True)
         q_loss.backward()
+        if self.max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(
+                list(self.q1.parameters()) + list(self.q2.parameters()),
+                self.max_grad_norm,
+            )
         self.q_opt.step()
 
         probs, log_probs = self._policy_dist(s)
@@ -147,6 +154,8 @@ class DiscreteSACAgent:
         pi_loss = (probs * (self.alpha * log_probs - q_pi)).sum(dim=1).mean()
         self.pi_opt.zero_grad(set_to_none=True)
         pi_loss.backward()
+        if self.max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
         self.pi_opt.step()
 
         alpha_loss = None

@@ -13,7 +13,7 @@ optuna:
   pruner_startup_trials: 5
 
   search_space:
-    alpha: [0.05, 2.0]
+    bonus_scale: [0.05, 2.0]
     bonus_beta: [0.1, 2.0]
     bonus_lambda: [0.1, 2.0]
     q_lr: [1.0e-4, 5.0e-4]

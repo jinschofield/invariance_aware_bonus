@@ -34,9 +34,10 @@ def _obs_to_pos(obs, maze_size):
     return pos.clamp(0, maze_size - 1)
 
 
-def _compute_reward(obs, maze_size, goal):
+def _compute_reward(obs, maze_size, goal, goal_t=None):
     pos = _obs_to_pos(obs, maze_size)
-    goal_t = torch.tensor(goal, device=obs.device, dtype=torch.long)
+    if goal_t is None:
+        goal_t = torch.tensor(goal, device=obs.device, dtype=torch.long)
     reached = (pos == goal_t.unsqueeze(0)).all(dim=1)
     return reached.float()
 
@@ -127,11 +128,16 @@ def run_online_training(
             "sac_hard_target": False,
             "sac_alpha_max": 10.0,
             "sac_use_epsilon": False,
+            "sac_max_grad_norm": 10.0,
             "eps_start": 1.0,
             "eps_end": 0.05,
             "eps_decay_steps": 100000,
             "bonus_lambda": 1.0,
             "bonus_beta": 1.0,
+            "bonus_clip": 5.0,
+            "bonus_norm": True,
+            "bonus_norm_beta": 0.99,
+            "bonus_norm_eps": 1e-4,
             "alpha_list": [0.0, 0.1, 0.3, 1.0, 3.0],
             "cbm_warmup_steps": 5000,
             "cbm_update_every": 50000,
@@ -150,6 +156,7 @@ def run_online_training(
 
     env_spec = get_env_spec(cfg, env_id)
     env = make_env(env_spec["ctor"], num_envs=online_cfg["num_envs"], maze_cfg=maze_cfg, device=device)
+    goal_t = torch.tensor(maze_cfg["goal"], device=device, dtype=torch.long)
 
     obs = env.reset()
     obs_dim = maze_cfg["obs_dim"]
@@ -277,6 +284,7 @@ def run_online_training(
         entropy_autotune=online_cfg.get("sac_entropy_autotune", True),
         target_entropy_ratio=online_cfg.get("sac_target_entropy_ratio", 0.98),
         alpha_max=online_cfg.get("sac_alpha_max", None),
+        max_grad_norm=online_cfg.get("sac_max_grad_norm", None),
         device=device,
     )
 
@@ -296,6 +304,12 @@ def run_online_training(
     eps_steps = max(1, int(online_cfg["eps_decay_steps"]))
 
     logs = []
+    bonus_mean = torch.tensor(0.0, device=device)
+    bonus_var = torch.tensor(1.0, device=device)
+    bonus_beta = float(online_cfg.get("bonus_norm_beta", 0.99))
+    bonus_eps = float(online_cfg.get("bonus_norm_eps", 1e-4))
+    bonus_clip = online_cfg.get("bonus_clip", None)
+    bonus_norm = bool(online_cfg.get("bonus_norm", False))
     success_window = deque(maxlen=int(online_cfg.get("success_window", 100)))
     success_total = 0
     episodes_total = 0
@@ -316,12 +330,12 @@ def run_online_training(
 
     last_q_loss = None
     last_pi_loss = None
-    last_alpha = None
+    last_ent_alpha = None
     last_rep_metric = None
 
     if log_every:
         print(
-            f"[Online] {env_id}/{method} seed={seed} alpha={alpha} "
+            f"[Online] {env_id}/{method} seed={seed} bonus_scale={alpha} "
             f"steps={total_steps} num_envs={online_cfg['num_envs']} device={device}",
             flush=True,
         )
@@ -332,9 +346,17 @@ def run_online_training(
             z = encode_fn(obs)
         actions = agent.act(z, epsilon)
         bonus_vals = bonus.compute_and_update(z.detach(), actions)
+        if bonus_norm:
+            batch_mean = bonus_vals.mean()
+            batch_var = bonus_vals.var(unbiased=False)
+            bonus_mean = bonus_beta * bonus_mean + (1.0 - bonus_beta) * batch_mean
+            bonus_var = bonus_beta * bonus_var + (1.0 - bonus_beta) * batch_var
+            bonus_vals = (bonus_vals - bonus_mean) / torch.sqrt(bonus_var + bonus_eps)
+        if bonus_clip is not None:
+            bonus_vals = bonus_vals.clamp(-float(bonus_clip), float(bonus_clip))
 
         next_obs, done, reset_obs = env.step(actions)
-        extrinsic = _compute_reward(next_obs, maze_cfg["maze_size"], maze_cfg["goal"])
+        extrinsic = _compute_reward(next_obs, maze_cfg["maze_size"], maze_cfg["goal"], goal_t=goal_t)
         total_reward = extrinsic + float(alpha) * bonus_vals
 
         buffer.add_batch(obs, actions, total_reward, next_obs, done)
@@ -347,7 +369,7 @@ def run_online_training(
         if done.any():
             done_ids = torch.nonzero(done).squeeze(-1)
             for idx in done_ids.tolist():
-                success_flag = int(ep_extr[idx].item() > 0)
+                success_flag = int(extrinsic[idx].item() > 0)
                 logs.append(
                     OnlineResult(
                         env_step=step,
@@ -377,7 +399,7 @@ def run_online_training(
             with torch.no_grad():
                 z_sp = encode_fn(sp)
             z_s = encode_fn(s).detach()
-            last_q_loss, last_pi_loss, last_alpha, _ = agent.update(
+            last_q_loss, last_pi_loss, last_ent_alpha, _ = agent.update(
                 (z_s, a, r, z_sp, d), gamma=online_cfg["gamma"], n_step=n_step_used
             )
 
@@ -397,7 +419,7 @@ def run_online_training(
             eta = (total_steps - step) / max(steps_per_sec, 1e-9)
             q_loss_str = f"{last_q_loss:.4f}" if last_q_loss is not None else "n/a"
             pi_loss_str = f"{last_pi_loss:.4f}" if last_pi_loss is not None else "n/a"
-            alpha_str = f"{last_alpha:.3f}" if last_alpha is not None else "n/a"
+            ent_alpha_str = f"{last_ent_alpha:.3f}" if last_ent_alpha is not None else "n/a"
             rep_str = f"{last_rep_metric:.4f}" if last_rep_metric is not None else "n/a"
             if len(success_window) > 0:
                 success_rate = sum(success_window) / float(len(success_window))
@@ -419,7 +441,7 @@ def run_online_training(
                 auc_str = "n/a"
             print(
                 f"[Online] step {step}/{total_steps} eps={epsilon:.3f} buffer={buffer.size} "
-                f"q_loss={q_loss_str} pi_loss={pi_loss_str} alpha={alpha_str} rep_metric={rep_str} "
+                f"q_loss={q_loss_str} pi_loss={pi_loss_str} ent_alpha={ent_alpha_str} rep_metric={rep_str} "
                 f"success={success_str} "
                 f"ema={success_ema_str} cum={success_cum_str} auc={auc_str} "
                 f"{steps_per_sec:.1f} steps/s ETA {eta/60:.1f}m",
@@ -444,6 +466,7 @@ def run_online_training(
     df["method"] = method
     df["seed"] = int(seed)
     df["alpha"] = float(alpha)
+    df["bonus_scale"] = float(alpha)
     df["runtime_seconds"] = runtime_s
 
     ensure_dir(output_dir)

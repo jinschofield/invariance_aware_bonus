@@ -41,7 +41,12 @@ def objective_factory(cfg, opt_cfg):
         online_cfg = trial_cfg["methods"]["online"]
         space = opt_cfg["search_space"]
 
-        alpha = trial.suggest_float("alpha", space["alpha"][0], space["alpha"][1])
+        if "bonus_scale" in space:
+            bonus_scale = trial.suggest_float(
+                "bonus_scale", space["bonus_scale"][0], space["bonus_scale"][1]
+            )
+        else:
+            bonus_scale = trial.suggest_float("alpha", space["alpha"][0], space["alpha"][1])
         online_cfg["bonus_beta"] = trial.suggest_float(
             "bonus_beta", space["bonus_beta"][0], space["bonus_beta"][1]
         )
@@ -75,7 +80,7 @@ def objective_factory(cfg, opt_cfg):
             env_id,
             method,
             seed_base + trial.number,
-            alpha,
+            bonus_scale,
             out_dir,
             trial=trial,
             prune_metric=metric,
