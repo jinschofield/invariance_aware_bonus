@@ -125,6 +125,8 @@ def run_online_training(
             "sac_entropy_autotune": True,
             "sac_target_entropy_ratio": 0.98,
             "sac_hard_target": False,
+            "sac_alpha_max": 10.0,
+            "sac_use_epsilon": False,
             "eps_start": 1.0,
             "eps_end": 0.05,
             "eps_decay_steps": 100000,
@@ -269,6 +271,7 @@ def run_online_training(
         entropy_alpha=online_cfg.get("sac_entropy_alpha", 0.2),
         entropy_autotune=online_cfg.get("sac_entropy_autotune", True),
         target_entropy_ratio=online_cfg.get("sac_target_entropy_ratio", 0.98),
+        alpha_max=online_cfg.get("sac_alpha_max", None),
         device=device,
     )
 
@@ -281,8 +284,9 @@ def run_online_training(
         device=device,
     )
 
+    use_epsilon = bool(online_cfg.get("sac_use_epsilon", False))
     eps_start = online_cfg["eps_start"]
-    epsilon = eps_start
+    epsilon = eps_start if use_epsilon else 0.0
     eps_end = online_cfg["eps_end"]
     eps_steps = max(1, int(online_cfg["eps_decay_steps"]))
 
@@ -379,7 +383,8 @@ def run_online_training(
             if step % int(online_cfg["target_update_every"]) == 0:
                 agent.sync_target()
 
-        epsilon = eps_end + (eps_start - eps_end) * max(0.0, 1.0 - step / eps_steps)
+        if use_epsilon:
+            epsilon = eps_end + (eps_start - eps_end) * max(0.0, 1.0 - step / eps_steps)
 
         if log_every and (step == 1 or step % log_every == 0 or step == total_steps):
             elapsed = time.time() - start_time

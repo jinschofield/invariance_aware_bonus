@@ -53,6 +53,7 @@ class DiscreteSACAgent:
         entropy_alpha,
         entropy_autotune,
         target_entropy_ratio,
+        alpha_max,
         device,
     ):
         self.n_actions = int(n_actions)
@@ -78,6 +79,7 @@ class DiscreteSACAgent:
         self.pi_opt = torch.optim.Adam(self.policy.parameters(), lr=actor_lr)
 
         self.target_entropy = float(np.log(self.n_actions) * float(target_entropy_ratio))
+        self.alpha_max = float(alpha_max) if alpha_max is not None else None
         if self.autotune:
             init = float(entropy_alpha)
             self.log_alpha = torch.nn.Parameter(
@@ -154,7 +156,11 @@ class DiscreteSACAgent:
             self.alpha_opt.zero_grad(set_to_none=True)
             alpha_loss.backward()
             self.alpha_opt.step()
-            self.alpha = float(self.log_alpha.exp().item())
+            if self.alpha_max is not None:
+                self.log_alpha.data.clamp_(max=math.log(self.alpha_max))
+                self.alpha = float(self.log_alpha.exp().clamp(max=self.alpha_max).item())
+            else:
+                self.alpha = float(self.log_alpha.exp().item())
 
         self._soft_update()
 
