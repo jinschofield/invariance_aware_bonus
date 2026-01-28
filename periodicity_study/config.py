@@ -39,6 +39,16 @@ class StudyConfig:
     bonus_nuis_samples: int = 16
     bonus_max_samples: int = 200000
 
+    online_eval_every_updates: int = 5
+    online_eval_min_buffer: int = 512
+    online_eval_buffer_size: int = 1000000
+
+    online_rep_update_every: int = 2048
+    online_rep_update_steps: int = 1
+    online_rep_batch_size: int = 256
+    online_rep_warmup_steps: int = 4096
+    online_rep_buffer_size: int = 0
+
     ppo_num_envs: int = 32
     ppo_total_steps: int = 200000
     ppo_steps_per_update: int = 128

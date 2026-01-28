@@ -60,6 +60,33 @@ class CRTRRep(BaseRepresentation):
             return self.encoder(obs)
 
 
+class OnlineCRTRRep(BaseRepresentation):
+    def __init__(self, learner: OfflineRepLearner, dim: int, device: torch.device):
+        super().__init__(name="crtr_online_joint", dim=int(dim))
+        self.learner = learner
+        self.device = device
+
+    def encode(self, obs: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():
+            return self.learner.rep_enc(obs)
+
+    def update(self, buf, batch_size: int, steps: int = 1) -> float:
+        if buf.size < batch_size:
+            return float("nan")
+        epi = build_episode_index_strided(buf.timestep, buf.size, buf.num_envs, self.device)
+        if epi.num_episodes == 0:
+            return float("nan")
+        self.learner.train()
+        last_loss = float("nan")
+        for _ in range(int(steps)):
+            loss = self.learner.loss(buf, epi, batch_size)
+            self.learner.opt.zero_grad(set_to_none=True)
+            loss.backward()
+            self.learner.opt.step()
+            last_loss = float(loss.item())
+        return last_loss
+
+
 def train_or_load_crtr(
     cfg,
     device: torch.device,
@@ -129,3 +156,20 @@ def train_or_load_crtr(
 
     torch.save({"encoder": learner.rep_enc.state_dict()}, model_path)
     return CRTRRep(learner.rep_enc, dim=cfg.z_dim)
+
+
+def init_online_crtr(cfg, device: torch.device) -> OnlineCRTRRep:
+    learner = OfflineRepLearner(
+        "CRTR",
+        obs_dim=cfg.obs_dim,
+        z_dim=cfg.z_dim,
+        hidden_dim=cfg.hidden_dim,
+        n_actions=cfg.n_actions,
+        crtr_temp=cfg.crtr_temp,
+        crtr_rep=cfg.crtr_rep_factor,
+        k_cap=cfg.k_cap,
+        geom_p=cfg.geom_p,
+        device=device,
+        lr=cfg.lr,
+    ).to(device)
+    return OnlineCRTRRep(learner, dim=cfg.z_dim, device=device)

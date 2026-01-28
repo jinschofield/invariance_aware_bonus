@@ -12,6 +12,7 @@ Representations evaluated:
 - Coord-only (normalized x,y).
 - Coord + nuisance (x,y + phase index).
 - CRTR learned representation (offline-trained).
+- CRTR learned representation (online joint training with PPO + bonus).
 
 ## Quick start
 
@@ -35,3 +36,10 @@ Notebook path: `periodicity_study/notebooks/periodicity_study_colab.ipynb`
 
 Outputs (figures + CSVs) are written under:
 `periodicity_study/outputs/`
+
+## Online training logs
+
+During PPO training, metrics for levels (1), (2), and (3) are logged over time:
+
+- `periodicity_study/outputs/logs/metrics_timeseries_<rep>.csv`
+- `periodicity_study/outputs/logs/metrics_timeseries_crtr_online_joint.csv`
