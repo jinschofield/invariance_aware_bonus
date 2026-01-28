@@ -27,8 +27,8 @@ methods:
     action_avg: true
 
   model:
-    z_dim: 8
-    hidden_dim: 64
+    z_dim: 32
+    hidden_dim: 256
     lr: 0.0003
     crtr_temp: 2.8284271247461903
     crtr_rep_default: 2
@@ -51,7 +51,7 @@ methods:
   online:
     num_envs: 16
     total_steps: 200000
-    buffer_size: 3200000
+    buffer_size: 100000
     batch_size: 256
     rep_batch_size: 256
     update_every: 4
@@ -68,6 +68,8 @@ methods:
     sac_entropy_alpha: 0.2
     sac_entropy_autotune: true
     sac_target_entropy_ratio: 0.98
+    sac_entropy_ratio_end: 0.2
+    sac_entropy_anneal_steps: 150000
     sac_hard_target: false
     sac_alpha_max: 10.0
     sac_use_epsilon: false

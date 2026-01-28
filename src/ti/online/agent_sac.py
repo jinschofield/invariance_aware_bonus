@@ -56,11 +56,19 @@ class DiscreteSACAgent:
         alpha_max,
         max_grad_norm,
         device,
+        entropy_ratio_end=None,
+        entropy_anneal_steps=None,
     ):
         self.n_actions = int(n_actions)
         self.device = device
         self.tau = float(tau)
         self.autotune = bool(entropy_autotune)
+
+        # Entropy annealing: ratio goes from target_entropy_ratio -> entropy_ratio_end
+        self.entropy_ratio_start = float(target_entropy_ratio)
+        self.entropy_ratio_end = float(entropy_ratio_end) if entropy_ratio_end is not None else self.entropy_ratio_start
+        self.entropy_anneal_steps = int(entropy_anneal_steps) if entropy_anneal_steps is not None else 0
+        self.max_entropy = float(np.log(self.n_actions))
 
         self.policy = CategoricalPolicy(
             input_dim, self.n_actions, hidden_dim=hidden_dim, hidden_layers=hidden_layers
@@ -79,7 +87,7 @@ class DiscreteSACAgent:
         )
         self.pi_opt = torch.optim.Adam(self.policy.parameters(), lr=actor_lr)
 
-        self.target_entropy = float(np.log(self.n_actions) * float(target_entropy_ratio))
+        self.target_entropy = self.max_entropy * self.entropy_ratio_start
         self.alpha_max = float(alpha_max) if alpha_max is not None else None
         self.max_grad_norm = float(max_grad_norm) if max_grad_norm else None
         if self.autotune:
@@ -93,6 +101,14 @@ class DiscreteSACAgent:
             self.alpha = float(entropy_alpha)
             self.log_alpha = None
             self.alpha_opt = None
+
+    def update_target_entropy(self, step):
+        """Anneal target entropy from start ratio to end ratio over anneal_steps."""
+        if self.entropy_anneal_steps <= 0 or self.entropy_ratio_start == self.entropy_ratio_end:
+            return
+        progress = min(1.0, float(step) / float(self.entropy_anneal_steps))
+        ratio = self.entropy_ratio_start + (self.entropy_ratio_end - self.entropy_ratio_start) * progress
+        self.target_entropy = self.max_entropy * ratio
 
     def _policy_dist(self, state):
         logits = self.policy(state)

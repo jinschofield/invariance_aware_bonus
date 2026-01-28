@@ -290,6 +290,8 @@ def run_online_training(
         alpha_max=online_cfg.get("sac_alpha_max", None),
         max_grad_norm=online_cfg.get("sac_max_grad_norm", None),
         device=device,
+        entropy_ratio_end=online_cfg.get("sac_entropy_ratio_end", None),
+        entropy_anneal_steps=online_cfg.get("sac_entropy_anneal_steps", None),
     )
 
     bonus = EpisodicEllipticalBonus(
@@ -336,6 +338,7 @@ def run_online_training(
     last_pi_loss = None
     last_ent_alpha = None
     last_rep_metric = None
+    last_bonus_mean = None
 
     if log_every:
         print(
@@ -351,6 +354,7 @@ def run_online_training(
             bonus_z = bonus_enc(obs).detach() if bonus_enc is not None else obs
         actions = agent.act(policy_obs, epsilon)
         bonus_vals = bonus.compute_and_update(bonus_z, actions)
+        last_bonus_mean = float(bonus_vals.mean().item())
         if bonus_norm:
             batch_mean = bonus_vals.mean()
             batch_var = bonus_vals.var(unbiased=False)
@@ -397,6 +401,9 @@ def run_online_training(
         obs = reset_obs
 
         if buffer.size >= online_cfg["batch_size"] and step % online_cfg["update_every"] == 0:
+            # Anneal target entropy
+            agent.update_target_entropy(step)
+            
             n_step = int(online_cfg.get("n_step", 1))
             s, a, r, sp, d, n_step_used = buffer.sample_nstep(
                 online_cfg["batch_size"], n_step, online_cfg["gamma"]
@@ -426,6 +433,7 @@ def run_online_training(
             pi_loss_str = f"{last_pi_loss:.4f}" if last_pi_loss is not None else "n/a"
             ent_alpha_str = f"{last_ent_alpha:.3f}" if last_ent_alpha is not None else "n/a"
             rep_str = f"{last_rep_metric:.4f}" if last_rep_metric is not None else "n/a"
+            bonus_str = f"{last_bonus_mean:.4f}" if (last_bonus_mean is not None and alpha > 0) else "n/a"
             if len(success_window) > 0:
                 success_rate = sum(success_window) / float(len(success_window))
                 success_str = f"{success_rate:.3f} (last {len(success_window)})"
@@ -446,7 +454,8 @@ def run_online_training(
                 auc_str = "n/a"
             print(
                 f"[Online] step {step}/{total_steps} eps={epsilon:.3f} buffer={buffer.size} "
-                f"q_loss={q_loss_str} pi_loss={pi_loss_str} ent_alpha={ent_alpha_str} rep_metric={rep_str} "
+                f"q_loss={q_loss_str} pi_loss={pi_loss_str} ent_alpha={ent_alpha_str} "
+                f"rep_loss={rep_str} bonus={bonus_str} "
                 f"success={success_str} "
                 f"ema={success_ema_str} cum={success_cum_str} auc={auc_str} "
                 f"{steps_per_sec:.1f} steps/s ETA {eta/60:.1f}m",

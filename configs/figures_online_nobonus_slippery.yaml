@@ -1,0 +1,8 @@
+figures:
+  nobonus_slippery:
+    generator: convergence
+    title: No bonus baseline (Slippery)
+    env: slippery
+    methods: [CRTR]
+    alpha: 0.0
+    profile: rl

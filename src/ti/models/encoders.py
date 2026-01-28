@@ -6,13 +6,11 @@ import torch.nn.functional as F
 class EncoderMLP(nn.Module):
     def __init__(self, obs_dim, z_dim, hidden):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(obs_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, z_dim),
-        )
+        layers = [nn.Linear(obs_dim, hidden), nn.ReLU()]
+        for _ in range(7):  # 7 more hidden layers (8 total)
+            layers.extend([nn.Linear(hidden, hidden), nn.ReLU()])
+        layers.append(nn.Linear(hidden, z_dim))
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x):
         z = self.net(x)
@@ -48,12 +46,10 @@ class ForwardDynamicsMLP(nn.Module):
 class BiscuitEncoder(nn.Module):
     def __init__(self, obs_dim, z_dim, hidden):
         super().__init__()
-        self.trunk = nn.Sequential(
-            nn.Linear(obs_dim, hidden),
-            nn.SiLU(),
-            nn.Linear(hidden, hidden),
-            nn.SiLU(),
-        )
+        layers = [nn.Linear(obs_dim, hidden), nn.SiLU()]
+        for _ in range(7):  # 7 more hidden layers (8 total)
+            layers.extend([nn.Linear(hidden, hidden), nn.SiLU()])
+        self.trunk = nn.Sequential(*layers)
         self.mu = nn.Linear(hidden, z_dim)
         self.logvar = nn.Linear(hidden, z_dim)
 

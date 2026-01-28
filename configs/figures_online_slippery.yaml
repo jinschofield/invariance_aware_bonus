@@ -1,0 +1,24 @@
+figures:
+  fig03_end2end_slippery:
+    generator: end2end
+    title: End-to-end invariance (Slippery)
+    env: slippery
+    method_a: CRTR
+    method_b: ICM
+    alpha: 1.0
+    profile: rl
+
+  fig06_convergence_slippery:
+    generator: convergence
+    title: Accelerated convergence (Slippery)
+    env: slippery
+    methods: [CRTR, ICM, RND, IDM, BISCUIT, CBM]
+    alpha: 1.0
+    profile: rl
+
+  fig12_hparam_sweep_slippery:
+    generator: hparam_sweep
+    title: Hyperparameter sweep (Slippery)
+    env: slippery
+    method: CRTR
+    profile: rl

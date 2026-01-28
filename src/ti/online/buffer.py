@@ -17,22 +17,46 @@ class OnlineReplayBuffer:
         self.current_timestep = torch.zeros((self.num_envs,), device=device, dtype=torch.long)
 
         self.size = 0
+        self.ptr = 0  # Write pointer for circular buffer
+        self.wrapped = False  # Track if buffer has wrapped
 
     def add_batch(self, s, a, r, sp, done):
         b = int(s.shape[0])
-        end = self.size + b
-        if end > self.max_size:
-            raise RuntimeError("buffer overflow")
-        idx = torch.arange(self.size, end, device=self.device)
-        self.s[idx] = s
-        self.a[idx] = a
-        self.r[idx] = r
-        self.sp[idx] = sp
-        self.d[idx] = done
-        self.timestep[idx] = self.current_timestep
+        # Circular buffer: wrap around when full, but maintain strided layout
+        # Each env writes at ptr + env_id, then ptr advances by num_envs
+        end_ptr = self.ptr + b
+        if end_ptr <= self.max_size:
+            # No wrap needed
+            idx = torch.arange(self.ptr, end_ptr, device=self.device)
+            self.s[idx] = s
+            self.a[idx] = a
+            self.r[idx] = r
+            self.sp[idx] = sp
+            self.d[idx] = done
+            self.timestep[idx] = self.current_timestep
+            self.ptr = end_ptr % self.max_size
+        else:
+            # Wrap around
+            self.wrapped = True
+            first_part = self.max_size - self.ptr
+            idx1 = torch.arange(self.ptr, self.max_size, device=self.device)
+            idx2 = torch.arange(0, b - first_part, device=self.device)
+            self.s[idx1] = s[:first_part]
+            self.s[idx2] = s[first_part:]
+            self.a[idx1] = a[:first_part]
+            self.a[idx2] = a[first_part:]
+            self.r[idx1] = r[:first_part]
+            self.r[idx2] = r[first_part:]
+            self.sp[idx1] = sp[:first_part]
+            self.sp[idx2] = sp[first_part:]
+            self.d[idx1] = done[:first_part]
+            self.d[idx2] = done[first_part:]
+            self.timestep[idx1] = self.current_timestep[:first_part]
+            self.timestep[idx2] = self.current_timestep[first_part:]
+            self.ptr = b - first_part
+        self.size = min(self.size + b, self.max_size)
         self.current_timestep = self.current_timestep + 1
         self.current_timestep[done] = 0
-        self.size = end
 
     def sample(self, batch_size):
         idx = torch.randint(0, self.size, (batch_size,), device=self.device)
@@ -45,6 +69,10 @@ class OnlineReplayBuffer:
     def sample_nstep(self, batch_size, n_step, gamma):
         n_step = int(n_step)
         if n_step <= 1:
+            s, a, r, sp, d = self.sample_with_reward(batch_size)
+            return s, a, r, sp, d, 1
+        # Fall back to 1-step if buffer has wrapped (n-step logic assumes contiguous storage)
+        if self.wrapped:
             s, a, r, sp, d = self.sample_with_reward(batch_size)
             return s, a, r, sp, d, 1
         nenv = int(self.num_envs)

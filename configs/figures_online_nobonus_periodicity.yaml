@@ -1,0 +1,8 @@
+figures:
+  nobonus_periodicity:
+    generator: convergence
+    title: No bonus baseline (Periodicity)
+    env: periodicity
+    methods: [CRTR]
+    alpha: 0.0
+    profile: rl

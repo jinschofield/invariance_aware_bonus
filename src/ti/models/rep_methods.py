@@ -65,7 +65,8 @@ class OfflineRepLearner(nn.Module):
             )
             z_t = self.rep_enc(s_t)
             z_f = self.rep_enc(s_f)
-            logits = (z_t @ z_f.T) / float(self.crtr_temp)
+            # Backward InfoNCE: anchor on z_f, predict which z_t it came from
+            logits = (z_f @ z_t.T) / float(self.crtr_temp)
             return F.cross_entropy(logits, torch.arange(bs_eff, device=self.device))
 
         if self.method == "IDM":
