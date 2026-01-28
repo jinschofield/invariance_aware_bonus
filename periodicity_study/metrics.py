@@ -8,9 +8,20 @@ from periodicity_study.common import build_obs_from_pos_phase, free_positions, m
 
 
 def _student_t_pvalue(t_val: torch.Tensor, df: int) -> torch.Tensor:
-    df_t = torch.tensor(float(df), device=t_val.device, dtype=t_val.dtype)
-    dist = torch.distributions.StudentT(df_t)
-    p = 2.0 * (1.0 - dist.cdf(t_val.abs()))
+    t_val = t_val.double()
+    v = torch.tensor(float(df), device=t_val.device, dtype=t_val.dtype)
+    x = v / (v + t_val * t_val)
+    if hasattr(torch.special, "betainc"):
+        ib = torch.special.betainc(0.5 * v, 0.5, x)
+        cdf = torch.where(t_val >= 0, 1.0 - 0.5 * ib, 0.5 * ib)
+    else:
+        try:
+            from scipy.stats import t as student_t
+        except Exception as exc:
+            raise RuntimeError("Student-t CDF requires torch.special.betainc or scipy.") from exc
+        cdf = torch.tensor(student_t.cdf(t_val.detach().cpu().numpy(), df), dtype=t_val.dtype)
+        cdf = cdf.to(t_val.device)
+    p = 2.0 * (1.0 - cdf)
     return torch.clamp(p, 0.0, 1.0)
 
 
