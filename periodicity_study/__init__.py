@@ -1,0 +1,1 @@
+"""Periodicity-only study subpackage."""
