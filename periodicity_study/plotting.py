@@ -12,6 +12,12 @@ def _mean_sem(values: torch.Tensor) -> Tuple[float, float]:
     return mean, sem
 
 
+def _format_x_ticks(ax: plt.Axes, rotation: int = 30) -> None:
+    ax.tick_params(axis="x", labelrotation=rotation)
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+
+
 def plot_bar(
     values_by_rep: Dict[str, torch.Tensor],
     title: str,
@@ -32,6 +38,7 @@ def plot_bar(
     ax.set_ylabel(ylabel)
     ax.set_xlabel("Representation")
     ax.grid(axis="y", alpha=0.3)
+    _format_x_ticks(ax)
 
     if p_values:
         text = "p-values (t-test):\n" + "\n".join(
@@ -65,6 +72,7 @@ def plot_heatmap(
     im = ax.imshow(data, cmap=cmap)
     ax.set_title(title)
     fig.colorbar(im, ax=ax, shrink=0.8)
+    _format_x_ticks(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -87,6 +95,7 @@ def plot_heatmap_diff(
     im = ax.imshow(data, cmap="coolwarm", vmin=-vmax, vmax=vmax)
     ax.set_title(title)
     fig.colorbar(im, ax=ax, shrink=0.8)
+    _format_x_ticks(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -116,10 +125,13 @@ def plot_timeseries(
         ax.set_title(label)
         ax.set_xlabel(x_key)
         ax.grid(alpha=0.3)
+        _format_x_ticks(ax)
 
     # Hide any unused axes
     for ax in axes[n:]:
         ax.axis("off")
+    for ax in axes:
+        ax.label_outer()
 
     fig.suptitle(title)
     fig.tight_layout()

@@ -313,17 +313,33 @@ def main():
             writer.writerows(logs)
         _save_timeseries(os.path.join(log_dir, f"metrics_timeseries_{name}.csv"), metrics_log)
 
+        metrics_to_plot = {
+            "rep_invariance_mean": "Rep invariance (mean ||z1 - z2||)",
+            "bonus_within_std_mean": "Bonus within-state std",
+            "bonus_between_std": "Bonus between-state std",
+            "action_kl_mean": "Action KL mean",
+        }
+
         if name == "crtr_learned":
             plot_timeseries(
                 metrics_log,
                 title="CRTR fixed (offline) metrics over training",
                 out_path=os.path.join(fig_dir, "timeseries_crtr_fixed.png"),
-                metrics={
-                    "rep_invariance_mean": "Rep invariance (mean ||z1 - z2||)",
-                    "bonus_within_std_mean": "Bonus within-state std",
-                    "bonus_between_std": "Bonus between-state std",
-                    "action_kl_mean": "Action KL mean",
-                },
+                metrics=metrics_to_plot,
+            )
+        elif name == "coord_only":
+            plot_timeseries(
+                metrics_log,
+                title="Coord-only (xy) PPO metrics over training",
+                out_path=os.path.join(fig_dir, "timeseries_coord_only.png"),
+                metrics=metrics_to_plot,
+            )
+        elif name == "coord_plus_nuisance":
+            plot_timeseries(
+                metrics_log,
+                title="Coord + nuisance (xy + phase) PPO metrics over training",
+                out_path=os.path.join(fig_dir, "timeseries_coord_plus_nuisance.png"),
+                metrics=metrics_to_plot,
             )
 
         action_kl[name] = action_dist_kl_by_position(policy, rep, cfg, device)
