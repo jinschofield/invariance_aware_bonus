@@ -265,8 +265,13 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     else:
         nuis_count = cfg.periodic_P
 
-    policy_obs_fn = lambda obs, rep_obs: obs
-    policy_input_dim = int(cfg.obs_dim)
+    policy_input = getattr(args, "policy_input", "rep")
+    if policy_input == "raw":
+        policy_obs_fn = lambda obs, rep_obs: obs
+        policy_input_dim = int(cfg.obs_dim)
+    else:
+        policy_obs_fn = None
+        policy_input_dim = None
 
     reps = {
         "coord_only": CoordOnlyRep(),
@@ -1041,6 +1046,12 @@ def main():
     parser.add_argument("--goal-only", action="store_true", help="Run only goal (extrinsic) PPO.")
     parser.add_argument(
         "--intrinsic-only", action="store_true", help="Run only intrinsic-only PPO."
+    )
+    parser.add_argument(
+        "--policy-input",
+        choices=["rep", "raw"],
+        default="rep",
+        help="PPO policy input: representation embedding (rep) or raw observation (raw).",
     )
     args = parser.parse_args()
 

@@ -48,6 +48,13 @@ python -m periodicity_study.run_study --goal-only --reps crtr_learned,idm_learne
 python -m periodicity_study.run_study --intrinsic-only
 ```
 
+### PPO policy input
+By default PPO consumes representation embeddings. To use raw observations instead:
+
+```bash
+python -m periodicity_study.run_study --policy-input raw
+```
+
 This study is GPU-first and will error if CUDA is not available. Use `--device cuda:0`
 to select a specific GPU.
 
