@@ -129,7 +129,9 @@ def _pairwise_ratios(values: dict) -> dict:
     return out
 
 
-def _eval_levels(rep, policy, cfg, device: torch.device, eval_buf, env_id: str) -> Dict[str, float]:
+def _eval_levels(
+    rep, policy, cfg, device: torch.device, eval_buf, env_id: str, policy_obs_fn=None
+) -> Dict[str, float]:
     rep_vals = rep_invariance_by_position(rep, cfg, device, env_id)
     rep_mean = float(rep_vals.mean().item())
     rep_std = float(rep_vals.std(unbiased=False).item())
@@ -146,7 +148,9 @@ def _eval_levels(rep, policy, cfg, device: torch.device, eval_buf, env_id: str) 
         bonus_within_over_between = bonus_metrics["within_over_between"]
         coverage_frac = coverage_from_buffer(eval_buf, cfg, device, env_id)
 
-    action_vals = action_dist_kl_by_position(policy, rep, cfg, device, env_id)
+    action_vals = action_dist_kl_by_position(
+        policy, rep, cfg, device, env_id, policy_obs_fn=policy_obs_fn
+    )
     action_mean = float(action_vals.mean().item())
     action_std = float(action_vals.std(unbiased=False).item())
 
@@ -399,7 +403,9 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         eval_buf = OnlineReplayBuffer(cfg.obs_dim, eval_buf_size, cfg.ppo_num_envs, device)
 
         def eval_cb(update, env_steps, model, rep=rep, eval_buf=eval_buf):
-            metrics = _eval_levels(rep, model, cfg, device, eval_buf, env_id)
+            metrics = _eval_levels(
+                rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
+            )
             metrics.update({"update": int(update), "env_steps": int(env_steps)})
             metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
             cov = float(metrics.get("coverage_fraction", float("nan")))
@@ -518,7 +524,9 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     rep_buf = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
 
     def online_eval_cb(update, env_steps, model, rep=online_rep, eval_buf=rep_buf):
-        metrics = _eval_levels(rep, model, cfg, device, eval_buf, env_id)
+        metrics = _eval_levels(
+            rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
+        )
         metrics.update({"update": int(update), "env_steps": int(env_steps)})
         metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
         cov = float(metrics.get("coverage_fraction", float("nan")))
@@ -570,7 +578,9 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     idm_buf = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
 
     def online_idm_eval_cb(update, env_steps, model, rep=online_idm, eval_buf=idm_buf):
-        metrics = _eval_levels(rep, model, cfg, device, eval_buf, env_id)
+        metrics = _eval_levels(
+            rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
+        )
         metrics.update({"update": int(update), "env_steps": int(env_steps)})
         metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
         cov = float(metrics.get("coverage_fraction", float("nan")))
