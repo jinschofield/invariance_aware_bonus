@@ -669,22 +669,19 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         coverage_series["crtr_online_joint"] = metrics_log
         _plot_rep_timeseries("crtr_online_joint", metrics_log)
 
-    online_rep_goal = None
-    rep_buf_goal = None
-
-    def online_goal_eval_cb(update, env_steps, model, rep=online_rep_goal, eval_buf=rep_buf_goal):
-        metrics = _eval_levels(
-            rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
-        )
-        metrics.update({"update": int(update), "env_steps": int(env_steps)})
-        metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
-        cov = float(metrics.get("coverage_fraction", float("nan")))
-        metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
-        return metrics
-
     if not run_intrinsic:
         online_rep_goal = init_online_crtr(cfg, device)
         rep_buf_goal = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
+
+        def online_goal_eval_cb(update, env_steps, model, rep=online_rep_goal, eval_buf=rep_buf_goal):
+            metrics = _eval_levels(
+                rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
+            )
+            metrics.update({"update": int(update), "env_steps": int(env_steps)})
+            metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
+            cov = float(metrics.get("coverage_fraction", float("nan")))
+            metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
+            return metrics
 
         online_policy_goal, online_logs_goal, metrics_log_goal = train_ppo(
             online_rep_goal,
@@ -780,22 +777,19 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         coverage_series["idm_online_joint"] = idm_metrics_log
         _plot_rep_timeseries("idm_online_joint", idm_metrics_log)
 
-    online_idm_goal = None
-    idm_buf_goal = None
-
-    def online_idm_goal_eval_cb(update, env_steps, model, rep=online_idm_goal, eval_buf=idm_buf_goal):
-        metrics = _eval_levels(
-            rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
-        )
-        metrics.update({"update": int(update), "env_steps": int(env_steps)})
-        metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
-        cov = float(metrics.get("coverage_fraction", float("nan")))
-        metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
-        return metrics
-
     if not run_intrinsic:
         online_idm_goal = init_online_idm(cfg, device)
         idm_buf_goal = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
+
+        def online_idm_goal_eval_cb(update, env_steps, model, rep=online_idm_goal, eval_buf=idm_buf_goal):
+            metrics = _eval_levels(
+                rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
+            )
+            metrics.update({"update": int(update), "env_steps": int(env_steps)})
+            metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
+            cov = float(metrics.get("coverage_fraction", float("nan")))
+            metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
+            return metrics
 
         idm_policy_goal, idm_logs_goal, idm_metrics_log_goal = train_ppo(
             online_idm_goal,
