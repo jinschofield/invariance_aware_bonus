@@ -5,6 +5,9 @@ import torch.nn.functional as F
 
 
 def make_layout(maze_size: int, device: torch.device) -> torch.Tensor:
+    if maze_size != 12:
+        return make_open_plate_layout(maze_size, device)
+
     layout = torch.tensor(
         [
             [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
@@ -23,8 +26,6 @@ def make_layout(maze_size: int, device: torch.device) -> torch.Tensor:
         device=device,
         dtype=torch.bool,
     )
-    if maze_size != 12:
-        raise ValueError("Only maze_size=12 is supported by the fixed layout.")
     return layout
 
 
