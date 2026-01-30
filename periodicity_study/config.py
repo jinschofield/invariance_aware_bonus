@@ -64,5 +64,5 @@ class StudyConfig:
     ppo_gae_lambda: float = 0.95
     ppo_clip_coef: float = 0.2
     ppo_ent_coef: float = 0.0
-    ppo_vf_coef: float = 0.5
+    ppo_vf_coef: float = 0.0
     ppo_max_grad_norm: float = 0.5
