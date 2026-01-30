@@ -96,6 +96,10 @@ def _save_timeseries(path: str, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+def _with_env_title(title: str, env_label: str) -> str:
+    return f"{title} - {env_label}"
+
+
 def _coverage_time(metrics_log: list[dict], threshold: float) -> tuple[float, float]:
     if not metrics_log:
         return float("nan"), float("nan")
@@ -228,6 +232,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     env_id = env_spec["id"]
     env_name = env_spec["name"]
     env_ctor = env_spec["ctor"]
+    env_label = f"{env_name} ({env_id})"
 
     fig_dir = os.path.join(cfg.output_dir, "figures", env_id)
     table_dir = os.path.join(cfg.output_dir, "tables", env_id)
@@ -273,7 +278,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     rep_p = pairwise_ttests(rep_metrics)
     plot_bar(
         rep_metrics,
-        title="Representation Invariance (same position, different nuisance)",
+        title=_with_env_title("Representation Invariance (same position, different nuisance)", env_label),
         ylabel="Mean ||z1 - z2||",
         out_path=os.path.join(fig_dir, "rep_invariance.png"),
         p_values=rep_p,
@@ -302,12 +307,12 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
 
         plot_heatmap(
             h_mean,
-            title=f"Elliptical bonus (mean) - {name}",
+            title=_with_env_title(f"Elliptical bonus (mean) - {name}", env_label),
             out_path=os.path.join(fig_dir, f"heat_bonus_mean_{name}.png"),
         )
         plot_heatmap(
             h_std,
-            title=f"Elliptical bonus (nuisance std) - {name}",
+            title=_with_env_title(f"Elliptical bonus (nuisance std) - {name}", env_label),
             out_path=os.path.join(fig_dir, f"heat_bonus_std_{name}.png"),
         )
 
@@ -317,7 +322,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         h_norm = (h_mean - mu) / sigma
         plot_heatmap(
             h_norm,
-            title=f"Elliptical bonus (mean, normalized) - {name}",
+            title=_with_env_title(f"Elliptical bonus (mean, normalized) - {name}", env_label),
             out_path=os.path.join(fig_dir, f"heat_bonus_mean_norm_{name}.png"),
         )
         heat_mean[name + "_norm"] = h_norm
@@ -328,21 +333,21 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
 
     plot_bar(
         bonus_mean_vals,
-        title="Elliptical Bonus Mean Across States",
+        title=_with_env_title("Elliptical Bonus Mean Across States", env_label),
         ylabel="Mean bonus",
         out_path=os.path.join(fig_dir, "bonus_mean_by_rep.png"),
         p_values=bonus_mean_p,
     )
     plot_bar(
         bonus_std_vals,
-        title="Elliptical Bonus Nuisance-Std (within state)",
+        title=_with_env_title("Elliptical Bonus Nuisance-Std (within state)", env_label),
         ylabel="Std over nuisance",
         out_path=os.path.join(fig_dir, "bonus_nuisance_std_by_rep.png"),
         p_values=bonus_std_p,
     )
     plot_bar(
         bonus_ratio_vals,
-        title="Elliptical Bonus (within-state std / between-state std)",
+        title=_with_env_title("Elliptical Bonus (within-state std / between-state std)", env_label),
         ylabel="Within/Between ratio",
         out_path=os.path.join(fig_dir, "bonus_within_over_between_by_rep.png"),
         p_values=bonus_ratio_p,
@@ -374,7 +379,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             plot_heatmap_diff(
                 a,
                 b,
-                title=f"Norm bonus diff: {names[i]} - {names[j]}",
+                title=_with_env_title(f"Norm bonus diff: {names[i]} - {names[j]}", env_label),
                 out_path=os.path.join(fig_dir, f"heat_bonus_norm_diff_{names[i]}_minus_{names[j]}.png"),
             )
 
@@ -428,28 +433,28 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         if name == "crtr_learned":
             plot_timeseries(
                 metrics_log,
-                title="CRTR fixed (offline) metrics over training",
+                title=_with_env_title("CRTR fixed (offline) metrics over training", env_label),
                 out_path=os.path.join(fig_dir, "timeseries_crtr_fixed.png"),
                 metrics=metrics_to_plot,
             )
         elif name == "idm_learned":
             plot_timeseries(
                 metrics_log,
-                title="IDM (offline) PPO metrics over training",
+                title=_with_env_title("IDM (offline) PPO metrics over training", env_label),
                 out_path=os.path.join(fig_dir, "timeseries_idm.png"),
                 metrics=metrics_to_plot,
             )
         elif name == "coord_only":
             plot_timeseries(
                 metrics_log,
-                title="Coord-only (xy) PPO metrics over training",
+                title=_with_env_title("Coord-only (xy) PPO metrics over training", env_label),
                 out_path=os.path.join(fig_dir, "timeseries_coord_only.png"),
                 metrics=metrics_to_plot,
             )
         elif name == "coord_plus_nuisance":
             plot_timeseries(
                 metrics_log,
-                title="Coord + nuisance (xy + phase) PPO metrics over training",
+                title=_with_env_title("Coord + nuisance (xy + phase) PPO metrics over training", env_label),
                 out_path=os.path.join(fig_dir, "timeseries_coord_plus_nuisance.png"),
                 metrics=metrics_to_plot,
             )
@@ -458,7 +463,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
 
     plot_multi_timeseries(
         coverage_series,
-        title="PPO coverage over time (full state coverage)",
+        title=_with_env_title("PPO coverage over time (full state coverage)", env_label),
         out_path=os.path.join(fig_dir, "ppo_coverage_over_time.png"),
         y_key="coverage_percent",
         y_label="Coverage (%)",
@@ -482,7 +487,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     _save_kv(os.path.join(table_dir, "ppo_coverage_time_ratios.csv"), coverage_ratios)
     plot_bar_values(
         coverage_ratios,
-        title="PPO coverage time ratios (steps per state)",
+        title=_with_env_title("PPO coverage time ratios (steps per state)", env_label),
         ylabel="Steps-per-state ratio",
         out_path=os.path.join(fig_dir, "ppo_coverage_time_ratios.png"),
     )
@@ -490,7 +495,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     action_kl_p = pairwise_ttests(action_kl)
     plot_bar(
         action_kl,
-        title="State-conditioned action distribution change across nuisance",
+        title=_with_env_title("State-conditioned action distribution change across nuisance", env_label),
         ylabel="Mean symmetric KL across nuisance",
         out_path=os.path.join(fig_dir, "ppo_action_kl_by_rep.png"),
         p_values=action_kl_p,
@@ -542,7 +547,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
 
     plot_timeseries(
         metrics_log,
-        title="CRTR online (joint) metrics over training",
+        title=_with_env_title("CRTR online (joint) metrics over training", env_label),
         out_path=os.path.join(fig_dir, "timeseries_crtr_online.png"),
         metrics={
             "rep_invariance_mean": "Rep invariance (mean ||z1 - z2||)",
@@ -591,7 +596,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     coverage_series["idm_online_joint"] = idm_metrics_log
     plot_multi_timeseries(
         coverage_series,
-        title="PPO coverage over time (incl. online CRTR/IDM)",
+        title=_with_env_title("PPO coverage over time (incl. online CRTR/IDM)", env_label),
         out_path=os.path.join(fig_dir, "ppo_coverage_over_time_with_online.png"),
         y_key="coverage_percent",
         y_label="Coverage (%)",
@@ -619,7 +624,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     )
     plot_bar_values(
         coverage_ratios,
-        title="PPO coverage time ratios (incl. online)",
+        title=_with_env_title("PPO coverage time ratios (incl. online)", env_label),
         ylabel="Steps-per-state ratio",
         out_path=os.path.join(fig_dir, "ppo_coverage_time_ratios_with_online.png"),
     )
@@ -635,7 +640,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     for key, label in compare_metrics.items():
         plot_multi_timeseries(
             metrics_series,
-            title=f"PPO {label} over time (all reps)",
+            title=_with_env_title(f"PPO {label} over time (all reps)", env_label),
             out_path=os.path.join(fig_dir, f"timeseries_compare_{key}.png"),
             y_key=key,
             y_label=label,
@@ -645,7 +650,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
 
     plot_timeseries(
         idm_metrics_log,
-        title="IDM online (joint) metrics over training",
+        title=_with_env_title("IDM online (joint) metrics over training", env_label),
         out_path=os.path.join(fig_dir, "timeseries_idm_online.png"),
         metrics={
             "rep_invariance_mean": "Rep invariance (mean ||z1 - z2||)",
@@ -662,7 +667,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     rep_p_all = pairwise_ttests(rep_metrics_all)
     plot_bar(
         rep_metrics_all,
-        title="Representation Invariance (incl. online joint)",
+        title=_with_env_title("Representation Invariance (incl. online joint)", env_label),
         ylabel="Mean ||z1 - z2||",
         out_path=os.path.join(fig_dir, "rep_invariance_with_online.png"),
         p_values=rep_p_all,
@@ -675,23 +680,23 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     h_mean_online, h_std_online = build_bonus_heatmaps(online_rep, buf, cfg, device, env_id)
     plot_heatmap(
         h_mean_online,
-        title="Elliptical bonus (mean) - crtr_online_joint",
+        title=_with_env_title("Elliptical bonus (mean) - crtr_online_joint", env_label),
         out_path=os.path.join(fig_dir, "heat_bonus_mean_crtr_online_joint.png"),
     )
     plot_heatmap(
         h_std_online,
-        title="Elliptical bonus (nuisance std) - crtr_online_joint",
+        title=_with_env_title("Elliptical bonus (nuisance std) - crtr_online_joint", env_label),
         out_path=os.path.join(fig_dir, "heat_bonus_std_crtr_online_joint.png"),
     )
     h_mean_idm, h_std_idm = build_bonus_heatmaps(online_idm, buf, cfg, device, env_id)
     plot_heatmap(
         h_mean_idm,
-        title="Elliptical bonus (mean) - idm_online_joint",
+        title=_with_env_title("Elliptical bonus (mean) - idm_online_joint", env_label),
         out_path=os.path.join(fig_dir, "heat_bonus_mean_idm_online_joint.png"),
     )
     plot_heatmap(
         h_std_idm,
-        title="Elliptical bonus (nuisance std) - idm_online_joint",
+        title=_with_env_title("Elliptical bonus (nuisance std) - idm_online_joint", env_label),
         out_path=os.path.join(fig_dir, "heat_bonus_std_idm_online_joint.png"),
     )
 
@@ -713,21 +718,21 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     bonus_ratio_p_all = pairwise_ttests(bonus_ratio_vals_all)
     plot_bar(
         bonus_mean_vals_all,
-        title="Elliptical Bonus Mean Across States (incl. online joint)",
+        title=_with_env_title("Elliptical Bonus Mean Across States (incl. online joint)", env_label),
         ylabel="Mean bonus",
         out_path=os.path.join(fig_dir, "bonus_mean_with_online.png"),
         p_values=bonus_mean_p_all,
     )
     plot_bar(
         bonus_std_vals_all,
-        title="Elliptical Bonus Nuisance-Std (incl. online joint)",
+        title=_with_env_title("Elliptical Bonus Nuisance-Std (incl. online joint)", env_label),
         ylabel="Std over nuisance",
         out_path=os.path.join(fig_dir, "bonus_nuisance_std_with_online.png"),
         p_values=bonus_std_p_all,
     )
     plot_bar(
         bonus_ratio_vals_all,
-        title="Elliptical Bonus Ratio (incl. online joint)",
+        title=_with_env_title("Elliptical Bonus Ratio (incl. online joint)", env_label),
         ylabel="Within/Between ratio",
         out_path=os.path.join(fig_dir, "bonus_ratio_with_online.png"),
         p_values=bonus_ratio_p_all,
@@ -755,7 +760,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     action_kl_p_all = pairwise_ttests(action_kl_all)
     plot_bar(
         action_kl_all,
-        title="Action KL across nuisance (incl. online joint)",
+        title=_with_env_title("Action KL across nuisance (incl. online joint)", env_label),
         ylabel="Mean symmetric KL across nuisance",
         out_path=os.path.join(fig_dir, "ppo_action_kl_with_online.png"),
         p_values=action_kl_p_all,
