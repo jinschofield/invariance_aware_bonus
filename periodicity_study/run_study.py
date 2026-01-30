@@ -261,6 +261,9 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     else:
         nuis_count = cfg.periodic_P
 
+    policy_obs_fn = lambda obs, rep_obs: obs
+    policy_input_dim = int(cfg.obs_dim)
+
     reps = {
         "coord_only": CoordOnlyRep(),
         "coord_plus_nuisance": CoordNuisanceRep(env_id, nuis_count, device),
@@ -409,6 +412,8 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             device,
             env_ctor,
             maze_cfg,
+            policy_obs_fn=policy_obs_fn,
+            policy_input_dim=policy_input_dim,
             eval_callback=eval_cb,
             eval_every_updates=cfg.online_eval_every_updates,
             eval_buffer=eval_buf,
@@ -459,7 +464,9 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
                 metrics=metrics_to_plot,
             )
 
-        action_kl[name] = action_dist_kl_by_position(policy, rep, cfg, device, env_id)
+        action_kl[name] = action_dist_kl_by_position(
+            policy, rep, cfg, device, env_id, policy_obs_fn=policy_obs_fn
+        )
 
     plot_multi_timeseries(
         coverage_series,
@@ -524,6 +531,8 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         device,
         env_ctor,
         maze_cfg,
+        policy_obs_fn=policy_obs_fn,
+        policy_input_dim=policy_input_dim,
         rep_updater=online_rep.update,
         rep_buffer=rep_buf,
         rep_update_every=cfg.online_rep_update_every,
@@ -574,6 +583,8 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         device,
         env_ctor,
         maze_cfg,
+        policy_obs_fn=policy_obs_fn,
+        policy_input_dim=policy_input_dim,
         rep_updater=online_idm.update,
         rep_buffer=idm_buf,
         rep_update_every=cfg.online_rep_update_every,
@@ -752,10 +763,10 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
 
     action_kl_all = dict(action_kl)
     action_kl_all["crtr_online_joint"] = action_dist_kl_by_position(
-        online_policy, online_rep, cfg, device, env_id
+        online_policy, online_rep, cfg, device, env_id, policy_obs_fn=policy_obs_fn
     )
     action_kl_all["idm_online_joint"] = action_dist_kl_by_position(
-        idm_policy, online_idm, cfg, device, env_id
+        idm_policy, online_idm, cfg, device, env_id, policy_obs_fn=policy_obs_fn
     )
     action_kl_p_all = pairwise_ttests(action_kl_all)
     plot_bar(
@@ -774,6 +785,13 @@ def main():
     parser.add_argument("--fast", action="store_true", help="Use smaller settings for quick runs.")
     parser.add_argument("--device", default=None, help="Override device, e.g., cpu or cuda:0")
     parser.add_argument("--force-retrain", action="store_true", help="Force CRTR retraining.")
+    parser.add_argument(
+        "--envs",
+        default=None,
+        help="Comma-separated env ids to run (e.g., periodicity,teacup_large).",
+    )
+    parser.add_argument("--only-large", action="store_true", help="Run only *_large envs.")
+    parser.add_argument("--only-small", action="store_true", help="Run only base (non-_large) envs.")
     args = parser.parse_args()
 
     base_cfg = StudyConfig()
@@ -799,7 +817,24 @@ def main():
     )
     seed_everything(int(base_cfg.seed), deterministic=True)
 
-    for env_spec in _build_env_specs(base_cfg):
+    env_specs = _build_env_specs(base_cfg)
+    if args.only_large and args.only_small:
+        raise ValueError("Cannot set both --only-large and --only-small.")
+    if args.only_large:
+        env_specs = [spec for spec in env_specs if spec["id"].endswith("_large")]
+    if args.only_small:
+        env_specs = [spec for spec in env_specs if not spec["id"].endswith("_large")]
+    if args.envs:
+        requested = {s.strip() for s in args.envs.split(",") if s.strip()}
+        env_specs = [spec for spec in env_specs if spec["id"] in requested]
+        missing = requested - {spec["id"] for spec in env_specs}
+        if missing:
+            known = ", ".join(sorted(spec["id"] for spec in _build_env_specs(base_cfg)))
+            raise ValueError(f"Unknown env ids: {sorted(missing)}. Known: {known}")
+    if not env_specs:
+        raise ValueError("No environments selected. Check --envs/--only-large/--only-small.")
+
+    for env_spec in env_specs:
         cfg = copy.deepcopy(base_cfg)
         _apply_env_spec(cfg, env_spec)
         _run_env(cfg, env_spec, device, args)

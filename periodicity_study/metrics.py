@@ -202,7 +202,9 @@ def symmetric_kl_torch(p: torch.Tensor, q: torch.Tensor, eps: float = 1e-8) -> t
     return 0.5 * (kl_pq + kl_qp)
 
 
-def action_dist_kl_by_position(policy, rep, cfg, device: torch.device, env_id: str) -> torch.Tensor:
+def action_dist_kl_by_position(
+    policy, rep, cfg, device: torch.device, env_id: str, policy_obs_fn=None
+) -> torch.Tensor:
     maze_cfg = maze_cfg_from_config(cfg)
     free = free_positions_for_env(env_id, maze_cfg["maze_size"], device)
     if env_id.startswith("slippery"):
@@ -220,8 +222,12 @@ def action_dist_kl_by_position(policy, rep, cfg, device: torch.device, env_id: s
     with torch.no_grad():
         probs_by_phase = []
         for obs in obs_list:
-            z = rep.encode(obs).detach()
-            probs = policy.action_probs(z)
+            if policy_obs_fn is None:
+                policy_obs = rep.encode(obs).detach()
+            else:
+                rep_obs = rep.encode(obs).detach()
+                policy_obs = policy_obs_fn(obs, rep_obs)
+            probs = policy.action_probs(policy_obs)
             probs_by_phase.append(probs)
         probs_by_phase = torch.stack(probs_by_phase, dim=1)
 
