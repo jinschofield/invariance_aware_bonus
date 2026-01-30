@@ -629,6 +629,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         "rep_invariance_mean": "Rep invariance (mean ||z1 - z2||)",
         "bonus_within_std_mean": "Bonus within-state std",
         "bonus_between_std": "Bonus between-state std",
+        "bonus_within_over_between": "Bonus within/between ratio",
         "action_kl_mean": "Action KL mean",
     }
     for key, label in compare_metrics.items():
