@@ -10,7 +10,7 @@ class StudyConfig:
     require_cuda: bool = True
 
     maze_size: int = 12
-    maze_size_large: int = 16
+    maze_size_large: int = 32
     obs_dim: int = 5
     n_actions: int = 4
     max_ep_steps: int = 60

@@ -464,6 +464,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         y_label="Coverage (%)",
         x_key="steps_per_state",
         x_label="Steps per free state",
+        hline_y=100.0,
     )
 
     coverage_threshold = float(getattr(cfg, "coverage_threshold", 0.99))
@@ -596,6 +597,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         y_label="Coverage (%)",
         x_key="steps_per_state",
         x_label="Steps per free state",
+        hline_y=100.0,
     )
 
     coverage_steps = {}
@@ -621,6 +623,24 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         ylabel="Steps-per-state ratio",
         out_path=os.path.join(fig_dir, "ppo_coverage_time_ratios_with_online.png"),
     )
+
+    metrics_series = dict(coverage_series)
+    compare_metrics = {
+        "rep_invariance_mean": "Rep invariance (mean ||z1 - z2||)",
+        "bonus_within_std_mean": "Bonus within-state std",
+        "bonus_between_std": "Bonus between-state std",
+        "action_kl_mean": "Action KL mean",
+    }
+    for key, label in compare_metrics.items():
+        plot_multi_timeseries(
+            metrics_series,
+            title=f"PPO {label} over time (all reps)",
+            out_path=os.path.join(fig_dir, f"timeseries_compare_{key}.png"),
+            y_key=key,
+            y_label=label,
+            x_key="env_steps",
+            hline_y=None,
+        )
 
     plot_timeseries(
         idm_metrics_log,

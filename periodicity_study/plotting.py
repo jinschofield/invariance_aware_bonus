@@ -173,6 +173,7 @@ def plot_multi_timeseries(
     y_label: str,
     x_key: str = "env_steps",
     x_label: Optional[str] = None,
+    hline_y: Optional[float] = 1.0,
 ):
     fig, ax = plt.subplots(figsize=(7, 4))
     for name, rows in series_by_rep.items():
@@ -185,7 +186,8 @@ def plot_multi_timeseries(
     ax.set_title(title)
     ax.set_xlabel(x_label or x_key)
     ax.set_ylabel(y_label)
-    ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, alpha=0.6)
+    if hline_y is not None:
+        ax.axhline(hline_y, color="gray", linestyle="--", linewidth=1.0, alpha=0.6)
     ax.grid(alpha=0.3)
     ax.legend()
     fig.tight_layout()
