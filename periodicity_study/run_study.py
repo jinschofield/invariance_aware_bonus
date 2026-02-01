@@ -2,7 +2,7 @@ import argparse
 import csv
 import os
 import sys
-from typing import Dict
+from typing import Dict, Optional
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(BASE_DIR)
@@ -274,6 +274,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     else:
         policy_obs_fn = None
         policy_input_dim = None
+    policy_suffix = f"_{policy_input}"
 
     reps = {
         "coord_only": CoordOnlyRep(),
@@ -290,25 +291,11 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     bonus_gif_every = int(getattr(cfg, "bonus_gif_every_updates", 2))
     bonus_gif_max = int(getattr(cfg, "bonus_gif_max_frames", 50))
     bonus_gif_fps = int(getattr(cfg, "bonus_gif_fps", 3))
-    bonus_gif_frames = []
-    bonus_gif_heatmaps = []
-    selected_reps = getattr(args, "reps_set", None)
-    if selected_reps is not None:
-        reps = {k: v for k, v in reps.items() if k in selected_reps}
+    bonus_gif_policy = str(getattr(cfg, "bonus_gif_policy_input", "rep"))
 
     print(f"\n=== {env_name} ({env_id}) ===")
     print("Stage 1: Representation invariance metrics")
     rep_metrics = {k: rep_invariance_by_position(v, cfg, device, env_id) for k, v in reps.items()}
-    rep_p = pairwise_ttests(rep_metrics)
-    plot_bar(
-        rep_metrics,
-        title=_with_env_title("Representation Invariance (same position, different nuisance)", env_label),
-        ylabel="Mean ||z1 - z2||",
-        out_path=os.path.join(fig_dir, "rep_invariance.png"),
-        p_values=rep_p,
-    )
-    _save_metric_values(os.path.join(table_dir, "rep_invariance_values.csv"), rep_metrics)
-    _save_kv(os.path.join(table_dir, "rep_invariance_pvalues.csv"), rep_p)
 
     print("Stage 2: Elliptical bonus metrics + heatmaps")
     heat_mean = {}
@@ -351,105 +338,21 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         )
         heat_mean[name + "_norm"] = h_norm
 
-    bonus_mean_p = pairwise_ttests(bonus_mean_vals)
-    bonus_std_p = pairwise_ttests(bonus_std_vals)
-    bonus_ratio_p = pairwise_ttests(bonus_ratio_vals)
+    # Offline-only summary plots/tables are omitted; combined outputs include online reps.
 
-    plot_bar(
-        bonus_mean_vals,
-        title=_with_env_title("Elliptical Bonus Mean Across States", env_label),
-        ylabel="Mean bonus",
-        out_path=os.path.join(fig_dir, "bonus_mean_by_rep.png"),
-        p_values=bonus_mean_p,
-    )
-    plot_bar(
-        bonus_std_vals,
-        title=_with_env_title("Elliptical Bonus Nuisance-Std (within state)", env_label),
-        ylabel="Std over nuisance",
-        out_path=os.path.join(fig_dir, "bonus_nuisance_std_by_rep.png"),
-        p_values=bonus_std_p,
-    )
-    plot_bar(
-        bonus_ratio_vals,
-        title=_with_env_title("Elliptical Bonus (within-state std / between-state std)", env_label),
-        ylabel="Within/Between ratio",
-        out_path=os.path.join(fig_dir, "bonus_within_over_between_by_rep.png"),
-        p_values=bonus_ratio_p,
-    )
+    # Offline-only bonus tables are omitted; combined tables are emitted after online reps.
 
-    _save_metric_values(os.path.join(table_dir, "bonus_mean_values.csv"), bonus_mean_vals)
-    _save_metric_values(os.path.join(table_dir, "bonus_std_values.csv"), bonus_std_vals)
-    _save_metric_values(os.path.join(table_dir, "bonus_ratio_values.csv"), bonus_ratio_vals)
-    _save_kv(os.path.join(table_dir, "bonus_mean_pvalues.csv"), bonus_mean_p)
-    _save_kv(os.path.join(table_dir, "bonus_std_pvalues.csv"), bonus_std_p)
-    _save_kv(os.path.join(table_dir, "bonus_ratio_pvalues.csv"), bonus_ratio_p)
-
-    with open(os.path.join(table_dir, "bonus_scalar_metrics.csv"), "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["rep", "within_std_mean", "between_std", "within_over_between"])
-        for k, v in bonus_scalars.items():
-            writer.writerow([k, v["within_std_mean"], v["between_std"], v["within_over_between"]])
-
-    names = list(reps.keys())
-    for i in range(len(names)):
-        for j in range(i + 1, len(names)):
-            a = heat_mean[names[i] + "_norm"]
-            b = heat_mean[names[j] + "_norm"]
-            sim = heatmap_similarity_metrics(a, b)
-            _save_kv(
-                os.path.join(table_dir, f"heatmap_similarity_{names[i]}_vs_{names[j]}.csv"),
-                sim,
-            )
-            plot_heatmap_diff(
-                a,
-                b,
-                title=_with_env_title(f"Norm bonus diff: {names[i]} - {names[j]}", env_label),
-                out_path=os.path.join(fig_dir, f"heat_bonus_norm_diff_{names[i]}_minus_{names[j]}.png"),
-            )
+    # Offline-only pairwise diff plots are omitted.
 
     print("Stage 3: PPO action distribution invariance (bonus-only)")
     action_kl = {}
-    policies = {}
+    action_kl_goal = {}
     coverage_series = {}
     coverage_series_goal = {}
-    action_kl_goal = {}
+    policies = {}
     eval_buf_size = int(cfg.online_eval_buffer_size)
     if eval_buf_size <= 0:
         eval_buf_size = int(cfg.ppo_total_steps) * int(cfg.ppo_num_envs)
-
-    metrics_to_plot = {
-        "rep_invariance_mean": "Rep invariance (mean ||z1 - z2||)",
-        "bonus_within_std_mean": "Bonus within-state std",
-        "bonus_between_std": "Bonus between-state std",
-        "bonus_within_over_between": "Bonus within/between ratio",
-        "action_kl_mean": "Action KL mean",
-    }
-    timeseries_meta = {
-        "crtr_learned": ("timeseries_crtr_fixed", "CRTR fixed (offline) metrics over training"),
-        "idm_learned": ("timeseries_idm", "IDM (offline) PPO metrics over training"),
-        "coord_only": ("timeseries_coord_only", "Coord-only (xy) PPO metrics over training"),
-        "coord_plus_nuisance": (
-            "timeseries_coord_plus_nuisance",
-            "Coord + nuisance (xy + phase) PPO metrics over training",
-        ),
-        "crtr_online_joint": ("timeseries_crtr_online", "CRTR online (joint) metrics over training"),
-        "idm_online_joint": ("timeseries_idm_online", "IDM online (joint) metrics over training"),
-    }
-
-    def _plot_rep_timeseries(rep_name: str, metrics_log: list[dict]) -> None:
-        base = rep_name.replace("_goal", "")
-        if base not in timeseries_meta:
-            return
-        fname, title = timeseries_meta[base]
-        if rep_name.endswith("_goal"):
-            fname = f"{fname}_goal"
-            title = f"{title} + goal"
-        plot_timeseries(
-            metrics_log,
-            title=_with_env_title(title, env_label),
-            out_path=os.path.join(fig_dir, f"{fname}.png"),
-            metrics=metrics_to_plot,
-        )
 
     compare_metrics = {
         "rep_invariance_mean": "Rep invariance (mean ||z1 - z2||)",
@@ -474,9 +377,9 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         coverage_title: str,
         coverage_ratio_title: str,
         action_kl_title: str,
-        success_plot: str | None = None,
-        success_time_plot: str | None = None,
-        success_values: str | None = None,
+        success_plot: Optional[str] = None,
+        success_time_plot: Optional[str] = None,
+        success_values: Optional[str] = None,
     ) -> None:
         if not coverage_data:
             return
@@ -539,6 +442,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
                 y_label=label,
                 x_key="env_steps",
                 hline_y=None,
+                xscale="log",
             )
 
         if success_plot and success_time_plot and success_values:
@@ -576,10 +480,14 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         (True,) if run_goal else ((False,) if run_intrinsic else (False, True))
     )
 
+    bonus_gif_frames: list[str] = []
+    bonus_gif_heatmaps: list[torch.Tensor] = []
+
     for name, rep in reps.items():
         for use_extrinsic in use_extrinsic_vals:
             run_name = name if not use_extrinsic else f"{name}_goal"
-            print(f"  Training PPO for {run_name}...")
+            run_tag = f"{run_name}{policy_suffix}"
+            print(f"  Training PPO for {run_tag}...")
             eval_buf = OnlineReplayBuffer(cfg.obs_dim, eval_buf_size, cfg.ppo_num_envs, device)
 
             def eval_cb(update, env_steps, model, rep=rep, eval_buf=eval_buf):
@@ -593,6 +501,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
                 if (
                     env_id == bonus_gif_env
                     and run_name == bonus_gif_rep
+                    and policy_input == bonus_gif_policy
                     and not use_extrinsic
                     and update % bonus_gif_every == 0
                     and len(bonus_gif_heatmaps) < bonus_gif_max
@@ -615,15 +524,22 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
                 eval_every_updates=cfg.online_eval_every_updates,
                 eval_buffer=eval_buf,
             )
-            policies[run_name] = policy
-            torch.save(policy.state_dict(), os.path.join(model_dir, f"ppo_{run_name}.pt"))
+            policies[run_tag] = policy
+            torch.save(policy.state_dict(), os.path.join(model_dir, f"ppo_{run_tag}.pt"))
 
-            with open(os.path.join(log_dir, f"ppo_logs_{run_name}.csv"), "w", newline="", encoding="utf-8") as f:
+            with open(
+                os.path.join(log_dir, f"ppo_logs_{run_tag}.csv"),
+                "w",
+                newline="",
+                encoding="utf-8",
+            ) as f:
                 writer = csv.DictWriter(f, fieldnames=logs[0].keys())
                 writer.writeheader()
                 writer.writerows(logs)
-            _save_timeseries(os.path.join(log_dir, f"metrics_timeseries_{run_name}.csv"), metrics_log)
-            _plot_rep_timeseries(run_name, metrics_log)
+            _save_timeseries(
+                os.path.join(log_dir, f"metrics_timeseries_{run_tag}.csv"),
+                metrics_log,
+            )
 
             action_vals = action_dist_kl_by_position(
                 policy, rep, cfg, device, env_id, policy_obs_fn=policy_obs_fn
@@ -635,44 +551,8 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
                 coverage_series[run_name] = metrics_log
                 action_kl[run_name] = action_vals
 
-    _plot_ppo_summary(
-        coverage_series,
-        action_kl,
-        coverage_plot="ppo_coverage_over_time",
-        coverage_time_steps="ppo_coverage_time_steps",
-        coverage_time_steps_per_state="ppo_coverage_time_steps_per_state",
-        coverage_time_ratios="ppo_coverage_time_ratios",
-        action_kl_plot="ppo_action_kl_by_rep",
-        action_kl_values="ppo_action_kl_values",
-        action_kl_pvalues="ppo_action_kl_pvalues",
-        compare_suffix="",
-        title_suffix="",
-        coverage_title="PPO coverage over time (full state coverage)",
-        coverage_ratio_title="PPO coverage time ratios (steps per state)",
-        action_kl_title="State-conditioned action distribution change across nuisance",
-    )
-    _plot_ppo_summary(
-        coverage_series_goal,
-        action_kl_goal,
-        coverage_plot="ppo_coverage_over_time_goal",
-        coverage_time_steps="ppo_coverage_time_steps_goal",
-        coverage_time_steps_per_state="ppo_coverage_time_steps_per_state_goal",
-        coverage_time_ratios="ppo_coverage_time_ratios_goal",
-        action_kl_plot="ppo_action_kl_by_rep_goal",
-        action_kl_values="ppo_action_kl_values_goal",
-        action_kl_pvalues="ppo_action_kl_pvalues_goal",
-        compare_suffix="_goal",
-        title_suffix=" + goal",
-        coverage_title="PPO coverage over time (full state coverage)",
-        coverage_ratio_title="PPO coverage time ratios (steps per state)",
-        action_kl_title="State-conditioned action distribution change across nuisance",
-        success_plot="ppo_success_rate_by_rep_goal",
-        success_time_plot="ppo_success_rate_over_time_goal",
-        success_values="ppo_success_rate_values_goal",
-    )
-
     if bonus_gif_heatmaps:
-        frames_dir = os.path.join(fig_dir, "bonus_evolution_frames")
+        frames_dir = os.path.join(fig_dir, f"bonus_evolution_frames{policy_suffix}")
         ensure_dir(frames_dir)
         heat_np = torch.stack(bonus_gif_heatmaps, dim=0).numpy()
         vmin = float(np.nanmin(heat_np))
@@ -687,71 +567,28 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
                 vmax=vmax,
             )
             bonus_gif_frames.append(frame_path)
-        gif_path = os.path.join(fig_dir, "bonus_evolution.gif")
+        gif_path = os.path.join(fig_dir, f"bonus_evolution{policy_suffix}.gif")
         images = [imageio.imread(p) for p in bonus_gif_frames]
         imageio.mimsave(gif_path, images, duration=1.0 / max(1, bonus_gif_fps))
 
-    print("Stage 4: Online joint representations + bonus + PPO")
-    online_rep = init_online_crtr(cfg, device)
-    rep_buf_size = int(cfg.online_rep_buffer_size)
-    if rep_buf_size <= 0:
-        rep_buf_size = int(cfg.ppo_total_steps) * int(cfg.ppo_num_envs)
-    rep_buf = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
+    policy_inputs = [policy_input]
+    for policy_input in policy_inputs:
+        if policy_input == "raw":
+            policy_obs_fn = lambda obs, rep_obs: obs
+            policy_input_dim = int(cfg.obs_dim)
+        else:
+            policy_obs_fn = None
+            policy_input_dim = None
+        policy_suffix = f"_{policy_input}"
 
-    def online_eval_cb(update, env_steps, model, rep=online_rep, eval_buf=rep_buf):
-        metrics = _eval_levels(
-            rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
-        )
-        metrics.update({"update": int(update), "env_steps": int(env_steps)})
-        metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
-        cov = float(metrics.get("coverage_fraction", float("nan")))
-        metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
-        return metrics
+        print(f"Stage 4: Online joint representations + bonus + PPO ({policy_input})")
+        online_rep = init_online_crtr(cfg, device)
+        rep_buf_size = int(cfg.online_rep_buffer_size)
+        if rep_buf_size <= 0:
+            rep_buf_size = int(cfg.ppo_total_steps) * int(cfg.ppo_num_envs)
+        rep_buf = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
 
-    if not run_goal:
-        online_policy, online_logs, metrics_log = train_ppo(
-            online_rep,
-            cfg,
-            device,
-            env_ctor,
-            maze_cfg,
-            policy_obs_fn=policy_obs_fn,
-            policy_input_dim=policy_input_dim,
-            use_extrinsic=False,
-            rep_updater=online_rep.update,
-            rep_buffer=rep_buf,
-            rep_update_every=cfg.online_rep_update_every,
-            rep_update_steps=cfg.online_rep_update_steps,
-            rep_batch_size=cfg.online_rep_batch_size,
-            rep_warmup_steps=cfg.online_rep_warmup_steps,
-            eval_callback=online_eval_cb,
-            eval_every_updates=cfg.online_eval_every_updates,
-            eval_buffer=rep_buf,
-        )
-        policies["crtr_online_joint"] = online_policy
-        torch.save(online_policy.state_dict(), os.path.join(model_dir, "ppo_crtr_online_joint.pt"))
-
-        with open(
-            os.path.join(log_dir, "ppo_logs_crtr_online_joint.csv"),
-            "w",
-            newline="",
-            encoding="utf-8",
-        ) as f:
-            writer = csv.DictWriter(f, fieldnames=online_logs[0].keys())
-            writer.writeheader()
-            writer.writerows(online_logs)
-        _save_timeseries(
-            os.path.join(log_dir, "metrics_timeseries_crtr_online_joint.csv"), metrics_log
-        )
-
-        coverage_series["crtr_online_joint"] = metrics_log
-        _plot_rep_timeseries("crtr_online_joint", metrics_log)
-
-    if not run_intrinsic:
-        online_rep_goal = init_online_crtr(cfg, device)
-        rep_buf_goal = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
-
-        def online_goal_eval_cb(update, env_steps, model, rep=online_rep_goal, eval_buf=rep_buf_goal):
+        def online_eval_cb(update, env_steps, model, rep=online_rep, eval_buf=rep_buf):
             metrics = _eval_levels(
                 rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
             )
@@ -761,105 +598,109 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
             return metrics
 
-        online_policy_goal, online_logs_goal, metrics_log_goal = train_ppo(
-            online_rep_goal,
-            cfg,
-            device,
-            env_ctor,
-            maze_cfg,
-            policy_obs_fn=policy_obs_fn,
-            policy_input_dim=policy_input_dim,
-            use_extrinsic=True,
-            rep_updater=online_rep_goal.update,
-            rep_buffer=rep_buf_goal,
-            rep_update_every=cfg.online_rep_update_every,
-            rep_update_steps=cfg.online_rep_update_steps,
-            rep_batch_size=cfg.online_rep_batch_size,
-            rep_warmup_steps=cfg.online_rep_warmup_steps,
-            eval_callback=online_goal_eval_cb,
-            eval_every_updates=cfg.online_eval_every_updates,
-            eval_buffer=rep_buf_goal,
-        )
-        policies["crtr_online_joint_goal"] = online_policy_goal
-        torch.save(
-            online_policy_goal.state_dict(),
-            os.path.join(model_dir, "ppo_crtr_online_joint_goal.pt"),
-        )
+        if not run_goal:
+            online_policy, online_logs, metrics_log = train_ppo(
+                online_rep,
+                cfg,
+                device,
+                env_ctor,
+                maze_cfg,
+                policy_obs_fn=policy_obs_fn,
+                policy_input_dim=policy_input_dim,
+                use_extrinsic=False,
+                rep_updater=online_rep.update,
+                rep_buffer=rep_buf,
+                rep_update_every=cfg.online_rep_update_every,
+                rep_update_steps=cfg.online_rep_update_steps,
+                rep_batch_size=cfg.online_rep_batch_size,
+                rep_warmup_steps=cfg.online_rep_warmup_steps,
+                eval_callback=online_eval_cb,
+                eval_every_updates=cfg.online_eval_every_updates,
+                eval_buffer=rep_buf,
+            )
+            policies[f"crtr_online_joint{policy_suffix}"] = online_policy
+            torch.save(
+                online_policy.state_dict(),
+                os.path.join(model_dir, f"ppo_crtr_online_joint{policy_suffix}.pt"),
+            )
 
-        with open(
-            os.path.join(log_dir, "ppo_logs_crtr_online_joint_goal.csv"),
-            "w",
-            newline="",
-            encoding="utf-8",
-        ) as f:
-            writer = csv.DictWriter(f, fieldnames=online_logs_goal[0].keys())
-            writer.writeheader()
-            writer.writerows(online_logs_goal)
-        _save_timeseries(
-            os.path.join(log_dir, "metrics_timeseries_crtr_online_joint_goal.csv"),
-            metrics_log_goal,
-        )
+            with open(
+                os.path.join(log_dir, f"ppo_logs_crtr_online_joint{policy_suffix}.csv"),
+                "w",
+                newline="",
+                encoding="utf-8",
+            ) as f:
+                writer = csv.DictWriter(f, fieldnames=online_logs[0].keys())
+                writer.writeheader()
+                writer.writerows(online_logs)
+            _save_timeseries(
+                os.path.join(log_dir, f"metrics_timeseries_crtr_online_joint{policy_suffix}.csv"),
+                metrics_log,
+            )
 
-        coverage_series_goal["crtr_online_joint_goal"] = metrics_log_goal
-        _plot_rep_timeseries("crtr_online_joint_goal", metrics_log_goal)
+            coverage_series["crtr_online_joint"] = metrics_log
 
-    online_idm = init_online_idm(cfg, device)
-    idm_buf = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
+        if not run_intrinsic:
+            online_rep_goal = init_online_crtr(cfg, device)
+            rep_buf_goal = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
 
-    def online_idm_eval_cb(update, env_steps, model, rep=online_idm, eval_buf=idm_buf):
-        metrics = _eval_levels(
-            rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
-        )
-        metrics.update({"update": int(update), "env_steps": int(env_steps)})
-        metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
-        cov = float(metrics.get("coverage_fraction", float("nan")))
-        metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
-        return metrics
+            def online_goal_eval_cb(
+                update, env_steps, model, rep=online_rep_goal, eval_buf=rep_buf_goal
+            ):
+                metrics = _eval_levels(
+                    rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
+                )
+                metrics.update({"update": int(update), "env_steps": int(env_steps)})
+                metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
+                cov = float(metrics.get("coverage_fraction", float("nan")))
+                metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
+                return metrics
 
-    if not run_goal:
-        idm_policy, idm_logs, idm_metrics_log = train_ppo(
-            online_idm,
-            cfg,
-            device,
-            env_ctor,
-            maze_cfg,
-            policy_obs_fn=policy_obs_fn,
-            policy_input_dim=policy_input_dim,
-            use_extrinsic=False,
-            rep_updater=online_idm.update,
-            rep_buffer=idm_buf,
-            rep_update_every=cfg.online_rep_update_every,
-            rep_update_steps=cfg.online_rep_update_steps,
-            rep_batch_size=cfg.online_rep_batch_size,
-            rep_warmup_steps=cfg.online_rep_warmup_steps,
-            eval_callback=online_idm_eval_cb,
-            eval_every_updates=cfg.online_eval_every_updates,
-            eval_buffer=idm_buf,
-        )
-        policies["idm_online_joint"] = idm_policy
-        torch.save(idm_policy.state_dict(), os.path.join(model_dir, "ppo_idm_online_joint.pt"))
+            online_policy_goal, online_logs_goal, metrics_log_goal = train_ppo(
+                online_rep_goal,
+                cfg,
+                device,
+                env_ctor,
+                maze_cfg,
+                policy_obs_fn=policy_obs_fn,
+                policy_input_dim=policy_input_dim,
+                use_extrinsic=True,
+                rep_updater=online_rep_goal.update,
+                rep_buffer=rep_buf_goal,
+                rep_update_every=cfg.online_rep_update_every,
+                rep_update_steps=cfg.online_rep_update_steps,
+                rep_batch_size=cfg.online_rep_batch_size,
+                rep_warmup_steps=cfg.online_rep_warmup_steps,
+                eval_callback=online_goal_eval_cb,
+                eval_every_updates=cfg.online_eval_every_updates,
+                eval_buffer=rep_buf_goal,
+            )
+            policies[f"crtr_online_joint_goal{policy_suffix}"] = online_policy_goal
+            torch.save(
+                online_policy_goal.state_dict(),
+                os.path.join(model_dir, f"ppo_crtr_online_joint_goal{policy_suffix}.pt"),
+            )
 
-        with open(
-            os.path.join(log_dir, "ppo_logs_idm_online_joint.csv"),
-            "w",
-            newline="",
-            encoding="utf-8",
-        ) as f:
-            writer = csv.DictWriter(f, fieldnames=idm_logs[0].keys())
-            writer.writeheader()
-            writer.writerows(idm_logs)
-        _save_timeseries(
-            os.path.join(log_dir, "metrics_timeseries_idm_online_joint.csv"), idm_metrics_log
-        )
+            with open(
+                os.path.join(log_dir, f"ppo_logs_crtr_online_joint_goal{policy_suffix}.csv"),
+                "w",
+                newline="",
+                encoding="utf-8",
+            ) as f:
+                writer = csv.DictWriter(f, fieldnames=online_logs_goal[0].keys())
+                writer.writeheader()
+                writer.writerows(online_logs_goal)
+            _save_timeseries(
+                os.path.join(log_dir, f"metrics_timeseries_crtr_online_joint_goal{policy_suffix}.csv"),
+                metrics_log_goal,
+            )
 
-        coverage_series["idm_online_joint"] = idm_metrics_log
-        _plot_rep_timeseries("idm_online_joint", idm_metrics_log)
+            coverage_series_goal["crtr_online_joint_goal"] = metrics_log_goal
 
-    if not run_intrinsic:
-        online_idm_goal = init_online_idm(cfg, device)
-        idm_buf_goal = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
+        online_idm = init_online_idm(cfg, device)
+        idm_buf = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
 
-        def online_idm_goal_eval_cb(update, env_steps, model, rep=online_idm_goal, eval_buf=idm_buf_goal):
+        def online_idm_eval_cb(update, env_steps, model, rep=online_idm, eval_buf=idm_buf):
             metrics = _eval_levels(
                 rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
             )
@@ -869,47 +710,104 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
             return metrics
 
-        idm_policy_goal, idm_logs_goal, idm_metrics_log_goal = train_ppo(
-            online_idm_goal,
-            cfg,
-            device,
-            env_ctor,
-            maze_cfg,
-            policy_obs_fn=policy_obs_fn,
-            policy_input_dim=policy_input_dim,
-            use_extrinsic=True,
-            rep_updater=online_idm_goal.update,
-            rep_buffer=idm_buf_goal,
-            rep_update_every=cfg.online_rep_update_every,
-            rep_update_steps=cfg.online_rep_update_steps,
-            rep_batch_size=cfg.online_rep_batch_size,
-            rep_warmup_steps=cfg.online_rep_warmup_steps,
-            eval_callback=online_idm_goal_eval_cb,
-            eval_every_updates=cfg.online_eval_every_updates,
-            eval_buffer=idm_buf_goal,
-        )
-        policies["idm_online_joint_goal"] = idm_policy_goal
-        torch.save(
-            idm_policy_goal.state_dict(),
-            os.path.join(model_dir, "ppo_idm_online_joint_goal.pt"),
-        )
+        if not run_goal:
+            idm_policy, idm_logs, idm_metrics_log = train_ppo(
+                online_idm,
+                cfg,
+                device,
+                env_ctor,
+                maze_cfg,
+                policy_obs_fn=policy_obs_fn,
+                policy_input_dim=policy_input_dim,
+                use_extrinsic=False,
+                rep_updater=online_idm.update,
+                rep_buffer=idm_buf,
+                rep_update_every=cfg.online_rep_update_every,
+                rep_update_steps=cfg.online_rep_update_steps,
+                rep_batch_size=cfg.online_rep_batch_size,
+                rep_warmup_steps=cfg.online_rep_warmup_steps,
+                eval_callback=online_idm_eval_cb,
+                eval_every_updates=cfg.online_eval_every_updates,
+                eval_buffer=idm_buf,
+            )
+            policies[f"idm_online_joint{policy_suffix}"] = idm_policy
+            torch.save(
+                idm_policy.state_dict(),
+                os.path.join(model_dir, f"ppo_idm_online_joint{policy_suffix}.pt"),
+            )
 
-        with open(
-            os.path.join(log_dir, "ppo_logs_idm_online_joint_goal.csv"),
-            "w",
-            newline="",
-            encoding="utf-8",
-        ) as f:
-            writer = csv.DictWriter(f, fieldnames=idm_logs_goal[0].keys())
-            writer.writeheader()
-            writer.writerows(idm_logs_goal)
-        _save_timeseries(
-            os.path.join(log_dir, "metrics_timeseries_idm_online_joint_goal.csv"),
-            idm_metrics_log_goal,
-        )
+            with open(
+                os.path.join(log_dir, f"ppo_logs_idm_online_joint{policy_suffix}.csv"),
+                "w",
+                newline="",
+                encoding="utf-8",
+            ) as f:
+                writer = csv.DictWriter(f, fieldnames=idm_logs[0].keys())
+                writer.writeheader()
+                writer.writerows(idm_logs)
+            _save_timeseries(
+                os.path.join(log_dir, f"metrics_timeseries_idm_online_joint{policy_suffix}.csv"),
+                idm_metrics_log,
+            )
 
-        coverage_series_goal["idm_online_joint_goal"] = idm_metrics_log_goal
-        _plot_rep_timeseries("idm_online_joint_goal", idm_metrics_log_goal)
+            coverage_series["idm_online_joint"] = idm_metrics_log
+
+        if not run_intrinsic:
+            online_idm_goal = init_online_idm(cfg, device)
+            idm_buf_goal = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
+
+            def online_idm_goal_eval_cb(
+                update, env_steps, model, rep=online_idm_goal, eval_buf=idm_buf_goal
+            ):
+                metrics = _eval_levels(
+                    rep, model, cfg, device, eval_buf, env_id, policy_obs_fn=policy_obs_fn
+                )
+                metrics.update({"update": int(update), "env_steps": int(env_steps)})
+                metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
+                cov = float(metrics.get("coverage_fraction", float("nan")))
+                metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
+                return metrics
+
+            idm_policy_goal, idm_logs_goal, idm_metrics_log_goal = train_ppo(
+                online_idm_goal,
+                cfg,
+                device,
+                env_ctor,
+                maze_cfg,
+                policy_obs_fn=policy_obs_fn,
+                policy_input_dim=policy_input_dim,
+                use_extrinsic=True,
+                rep_updater=online_idm_goal.update,
+                rep_buffer=idm_buf_goal,
+                rep_update_every=cfg.online_rep_update_every,
+                rep_update_steps=cfg.online_rep_update_steps,
+                rep_batch_size=cfg.online_rep_batch_size,
+                rep_warmup_steps=cfg.online_rep_warmup_steps,
+                eval_callback=online_idm_goal_eval_cb,
+                eval_every_updates=cfg.online_eval_every_updates,
+                eval_buffer=idm_buf_goal,
+            )
+            policies[f"idm_online_joint_goal{policy_suffix}"] = idm_policy_goal
+            torch.save(
+                idm_policy_goal.state_dict(),
+                os.path.join(model_dir, f"ppo_idm_online_joint_goal{policy_suffix}.pt"),
+            )
+
+            with open(
+                os.path.join(log_dir, f"ppo_logs_idm_online_joint_goal{policy_suffix}.csv"),
+                "w",
+                newline="",
+                encoding="utf-8",
+            ) as f:
+                writer = csv.DictWriter(f, fieldnames=idm_logs_goal[0].keys())
+                writer.writeheader()
+                writer.writerows(idm_logs_goal)
+            _save_timeseries(
+                os.path.join(log_dir, f"metrics_timeseries_idm_online_joint_goal{policy_suffix}.csv"),
+                idm_metrics_log_goal,
+            )
+
+            coverage_series_goal["idm_online_joint_goal"] = idm_metrics_log_goal
 
     action_kl_with_online = dict(action_kl)
     if not run_goal:
@@ -938,131 +836,184 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             policy_obs_fn=policy_obs_fn,
         )
 
-    _plot_ppo_summary(
-        coverage_series,
-        action_kl_with_online,
-        coverage_plot="ppo_coverage_over_time_with_online",
-        coverage_time_steps="ppo_coverage_time_steps_with_online",
-        coverage_time_steps_per_state="ppo_coverage_time_steps_per_state_with_online",
-        coverage_time_ratios="ppo_coverage_time_ratios_with_online",
-        action_kl_plot="ppo_action_kl_with_online",
-        action_kl_values="ppo_action_kl_values_with_online",
-        action_kl_pvalues="ppo_action_kl_pvalues_with_online",
-        compare_suffix="",
-        title_suffix="",
-        coverage_title="PPO coverage over time (incl. online CRTR/IDM)",
-        coverage_ratio_title="PPO coverage time ratios (incl. online)",
-        action_kl_title="Action KL across nuisance (incl. online joint)",
-    )
-    _plot_ppo_summary(
-        coverage_series_goal,
-        action_kl_with_online_goal,
-        coverage_plot="ppo_coverage_over_time_with_online_goal",
-        coverage_time_steps="ppo_coverage_time_steps_with_online_goal",
-        coverage_time_steps_per_state="ppo_coverage_time_steps_per_state_with_online_goal",
-        coverage_time_ratios="ppo_coverage_time_ratios_with_online_goal",
-        action_kl_plot="ppo_action_kl_with_online_goal",
-        action_kl_values="ppo_action_kl_values_with_online_goal",
-        action_kl_pvalues="ppo_action_kl_pvalues_with_online_goal",
-        compare_suffix="_goal",
-        title_suffix=" + goal",
-        coverage_title="PPO coverage over time (incl. online CRTR/IDM)",
-        coverage_ratio_title="PPO coverage time ratios (incl. online)",
-        action_kl_title="Action KL across nuisance (incl. online joint)",
-        success_plot="ppo_success_rate_by_rep_with_online_goal",
-        success_time_plot="ppo_success_rate_over_time_with_online_goal",
-        success_values="ppo_success_rate_values_with_online_goal",
-    )
+        _plot_ppo_summary(
+            coverage_series,
+            action_kl_with_online,
+            coverage_plot=f"ppo_coverage_over_time_with_online{policy_suffix}",
+            coverage_time_steps=f"ppo_coverage_time_steps_with_online{policy_suffix}",
+            coverage_time_steps_per_state=f"ppo_coverage_time_steps_per_state_with_online{policy_suffix}",
+            coverage_time_ratios=f"ppo_coverage_time_ratios_with_online{policy_suffix}",
+            action_kl_plot=f"ppo_action_kl_with_online{policy_suffix}",
+            action_kl_values=f"ppo_action_kl_values_with_online{policy_suffix}",
+            action_kl_pvalues=f"ppo_action_kl_pvalues_with_online{policy_suffix}",
+            compare_suffix=policy_suffix,
+            title_suffix=f" ({policy_input})",
+            coverage_title="PPO coverage over time (incl. online CRTR/IDM)",
+            coverage_ratio_title="PPO coverage time ratios (incl. online)",
+            action_kl_title="Action KL across nuisance (incl. online joint)",
+        )
+        _plot_ppo_summary(
+            coverage_series_goal,
+            action_kl_with_online_goal,
+            coverage_plot=f"ppo_coverage_over_time_with_online_goal{policy_suffix}",
+            coverage_time_steps=f"ppo_coverage_time_steps_with_online_goal{policy_suffix}",
+            coverage_time_steps_per_state=(
+                f"ppo_coverage_time_steps_per_state_with_online_goal{policy_suffix}"
+            ),
+            coverage_time_ratios=f"ppo_coverage_time_ratios_with_online_goal{policy_suffix}",
+            action_kl_plot=f"ppo_action_kl_with_online_goal{policy_suffix}",
+            action_kl_values=f"ppo_action_kl_values_with_online_goal{policy_suffix}",
+            action_kl_pvalues=f"ppo_action_kl_pvalues_with_online_goal{policy_suffix}",
+            compare_suffix=f"_goal{policy_suffix}",
+            title_suffix=f" + goal ({policy_input})",
+            coverage_title="PPO coverage over time (incl. online CRTR/IDM)",
+            coverage_ratio_title="PPO coverage time ratios (incl. online)",
+            action_kl_title="Action KL across nuisance (incl. online joint)",
+            success_plot=f"ppo_success_rate_by_rep_with_online_goal{policy_suffix}",
+            success_time_plot=f"ppo_success_rate_over_time_with_online_goal{policy_suffix}",
+            success_values=f"ppo_success_rate_values_with_online_goal{policy_suffix}",
+        )
 
-    # Final metrics including online joint representation
-    rep_metrics_all = dict(rep_metrics)
-    rep_metrics_all["crtr_online_joint"] = rep_invariance_by_position(online_rep, cfg, device, env_id)
-    rep_metrics_all["idm_online_joint"] = rep_invariance_by_position(online_idm, cfg, device, env_id)
-    rep_p_all = pairwise_ttests(rep_metrics_all)
-    plot_bar(
-        rep_metrics_all,
-        title=_with_env_title("Representation Invariance (incl. online joint)", env_label),
-        ylabel="Mean ||z1 - z2||",
-        out_path=os.path.join(fig_dir, "rep_invariance_with_online.png"),
-        p_values=rep_p_all,
-    )
-    _save_metric_values(
-        os.path.join(table_dir, "rep_invariance_values_with_online.csv"), rep_metrics_all
-    )
-    _save_kv(os.path.join(table_dir, "rep_invariance_pvalues_with_online.csv"), rep_p_all)
+        rep_metrics_all = dict(rep_metrics)
+        rep_metrics_all["crtr_online_joint"] = rep_invariance_by_position(
+            online_rep, cfg, device, env_id
+        )
+        rep_metrics_all["idm_online_joint"] = rep_invariance_by_position(
+            online_idm, cfg, device, env_id
+        )
+        rep_p_all = pairwise_ttests(rep_metrics_all)
+        plot_bar(
+            rep_metrics_all,
+            title=_with_env_title(
+                f"Representation Invariance (incl. online joint){policy_suffix}", env_label
+            ),
+            ylabel="Mean ||z1 - z2||",
+            out_path=os.path.join(fig_dir, f"rep_invariance_with_online{policy_suffix}.png"),
+            p_values=rep_p_all,
+        )
+        _save_metric_values(
+            os.path.join(table_dir, f"rep_invariance_values_with_online{policy_suffix}.csv"),
+            rep_metrics_all,
+        )
+        _save_kv(
+            os.path.join(table_dir, f"rep_invariance_pvalues_with_online{policy_suffix}.csv"),
+            rep_p_all,
+        )
 
-    h_mean_online, h_std_online = build_bonus_heatmaps(online_rep, buf, cfg, device, env_id)
-    plot_heatmap(
-        h_mean_online,
-        title=_with_env_title("Elliptical bonus (mean) - crtr_online_joint", env_label),
-        out_path=os.path.join(fig_dir, "heat_bonus_mean_crtr_online_joint.png"),
-    )
-    plot_heatmap(
-        h_std_online,
-        title=_with_env_title("Elliptical bonus (nuisance std) - crtr_online_joint", env_label),
-        out_path=os.path.join(fig_dir, "heat_bonus_std_crtr_online_joint.png"),
-    )
-    h_mean_idm, h_std_idm = build_bonus_heatmaps(online_idm, buf, cfg, device, env_id)
-    plot_heatmap(
-        h_mean_idm,
-        title=_with_env_title("Elliptical bonus (mean) - idm_online_joint", env_label),
-        out_path=os.path.join(fig_dir, "heat_bonus_mean_idm_online_joint.png"),
-    )
-    plot_heatmap(
-        h_std_idm,
-        title=_with_env_title("Elliptical bonus (nuisance std) - idm_online_joint", env_label),
-        out_path=os.path.join(fig_dir, "heat_bonus_std_idm_online_joint.png"),
-    )
+        h_mean_online, h_std_online = build_bonus_heatmaps(online_rep, buf, cfg, device, env_id)
+        plot_heatmap(
+            h_mean_online,
+            title=_with_env_title(
+                f"Elliptical bonus (mean) - crtr_online_joint{policy_suffix}", env_label
+            ),
+            out_path=os.path.join(
+                fig_dir, f"heat_bonus_mean_crtr_online_joint{policy_suffix}.png"
+            ),
+        )
+        plot_heatmap(
+            h_std_online,
+            title=_with_env_title(
+                f"Elliptical bonus (nuisance std) - crtr_online_joint{policy_suffix}", env_label
+            ),
+            out_path=os.path.join(
+                fig_dir, f"heat_bonus_std_crtr_online_joint{policy_suffix}.png"
+            ),
+        )
+        h_mean_idm, h_std_idm = build_bonus_heatmaps(online_idm, buf, cfg, device, env_id)
+        plot_heatmap(
+            h_mean_idm,
+            title=_with_env_title(
+                f"Elliptical bonus (mean) - idm_online_joint{policy_suffix}", env_label
+            ),
+            out_path=os.path.join(
+                fig_dir, f"heat_bonus_mean_idm_online_joint{policy_suffix}.png"
+            ),
+        )
+        plot_heatmap(
+            h_std_idm,
+            title=_with_env_title(
+                f"Elliptical bonus (nuisance std) - idm_online_joint{policy_suffix}", env_label
+            ),
+            out_path=os.path.join(
+                fig_dir, f"heat_bonus_std_idm_online_joint{policy_suffix}.png"
+            ),
+        )
 
-    bonus_mean_vals_all = dict(bonus_mean_vals)
-    bonus_std_vals_all = dict(bonus_std_vals)
-    bonus_ratio_vals_all = dict(bonus_ratio_vals)
-    mask_online = torch.isfinite(h_mean_online)
-    bonus_mean_vals_all["crtr_online_joint"] = h_mean_online[mask_online]
-    bonus_std_vals_all["crtr_online_joint"] = h_std_online[mask_online]
-    between_std_online = h_mean_online[mask_online].std(unbiased=False)
-    bonus_ratio_vals_all["crtr_online_joint"] = h_std_online[mask_online] / (between_std_online + 1e-8)
-    mask_idm = torch.isfinite(h_mean_idm)
-    bonus_mean_vals_all["idm_online_joint"] = h_mean_idm[mask_idm]
-    bonus_std_vals_all["idm_online_joint"] = h_std_idm[mask_idm]
-    between_std_idm = h_mean_idm[mask_idm].std(unbiased=False)
-    bonus_ratio_vals_all["idm_online_joint"] = h_std_idm[mask_idm] / (between_std_idm + 1e-8)
-    bonus_mean_p_all = pairwise_ttests(bonus_mean_vals_all)
-    bonus_std_p_all = pairwise_ttests(bonus_std_vals_all)
-    bonus_ratio_p_all = pairwise_ttests(bonus_ratio_vals_all)
-    plot_bar(
-        bonus_mean_vals_all,
-        title=_with_env_title("Elliptical Bonus Mean Across States (incl. online joint)", env_label),
-        ylabel="Mean bonus",
-        out_path=os.path.join(fig_dir, "bonus_mean_with_online.png"),
-        p_values=bonus_mean_p_all,
-    )
-    plot_bar(
-        bonus_std_vals_all,
-        title=_with_env_title("Elliptical Bonus Nuisance-Std (incl. online joint)", env_label),
-        ylabel="Std over nuisance",
-        out_path=os.path.join(fig_dir, "bonus_nuisance_std_with_online.png"),
-        p_values=bonus_std_p_all,
-    )
-    plot_bar(
-        bonus_ratio_vals_all,
-        title=_with_env_title("Elliptical Bonus Ratio (incl. online joint)", env_label),
-        ylabel="Within/Between ratio",
-        out_path=os.path.join(fig_dir, "bonus_ratio_with_online.png"),
-        p_values=bonus_ratio_p_all,
-    )
-    _save_metric_values(
-        os.path.join(table_dir, "bonus_mean_values_with_online.csv"), bonus_mean_vals_all
-    )
-    _save_metric_values(
-        os.path.join(table_dir, "bonus_std_values_with_online.csv"), bonus_std_vals_all
-    )
-    _save_metric_values(
-        os.path.join(table_dir, "bonus_ratio_values_with_online.csv"), bonus_ratio_vals_all
-    )
-    _save_kv(os.path.join(table_dir, "bonus_mean_pvalues_with_online.csv"), bonus_mean_p_all)
-    _save_kv(os.path.join(table_dir, "bonus_std_pvalues_with_online.csv"), bonus_std_p_all)
-    _save_kv(os.path.join(table_dir, "bonus_ratio_pvalues_with_online.csv"), bonus_ratio_p_all)
+        bonus_mean_vals_all = dict(bonus_mean_vals)
+        bonus_std_vals_all = dict(bonus_std_vals)
+        bonus_ratio_vals_all = dict(bonus_ratio_vals)
+        mask_online = torch.isfinite(h_mean_online)
+        bonus_mean_vals_all["crtr_online_joint"] = h_mean_online[mask_online]
+        bonus_std_vals_all["crtr_online_joint"] = h_std_online[mask_online]
+        between_std_online = h_mean_online[mask_online].std(unbiased=False)
+        bonus_ratio_vals_all["crtr_online_joint"] = h_std_online[mask_online] / (
+            between_std_online + 1e-8
+        )
+        mask_idm = torch.isfinite(h_mean_idm)
+        bonus_mean_vals_all["idm_online_joint"] = h_mean_idm[mask_idm]
+        bonus_std_vals_all["idm_online_joint"] = h_std_idm[mask_idm]
+        between_std_idm = h_mean_idm[mask_idm].std(unbiased=False)
+        bonus_ratio_vals_all["idm_online_joint"] = h_std_idm[mask_idm] / (
+            between_std_idm + 1e-8
+        )
+        bonus_mean_p_all = pairwise_ttests(bonus_mean_vals_all)
+        bonus_std_p_all = pairwise_ttests(bonus_std_vals_all)
+        bonus_ratio_p_all = pairwise_ttests(bonus_ratio_vals_all)
+        plot_bar(
+            bonus_mean_vals_all,
+            title=_with_env_title(
+                f"Elliptical Bonus Mean Across States (incl. online joint){policy_suffix}",
+                env_label,
+            ),
+            ylabel="Mean bonus",
+            out_path=os.path.join(fig_dir, f"bonus_mean_with_online{policy_suffix}.png"),
+            p_values=bonus_mean_p_all,
+        )
+        plot_bar(
+            bonus_std_vals_all,
+            title=_with_env_title(
+                f"Elliptical Bonus Nuisance-Std (incl. online joint){policy_suffix}",
+                env_label,
+            ),
+            ylabel="Std over nuisance",
+            out_path=os.path.join(
+                fig_dir, f"bonus_nuisance_std_with_online{policy_suffix}.png"
+            ),
+            p_values=bonus_std_p_all,
+        )
+        plot_bar(
+            bonus_ratio_vals_all,
+            title=_with_env_title(
+                f"Elliptical Bonus Ratio (incl. online joint){policy_suffix}", env_label
+            ),
+            ylabel="Within/Between ratio",
+            out_path=os.path.join(fig_dir, f"bonus_ratio_with_online{policy_suffix}.png"),
+            p_values=bonus_ratio_p_all,
+        )
+        _save_metric_values(
+            os.path.join(table_dir, f"bonus_mean_values_with_online{policy_suffix}.csv"),
+            bonus_mean_vals_all,
+        )
+        _save_metric_values(
+            os.path.join(table_dir, f"bonus_std_values_with_online{policy_suffix}.csv"),
+            bonus_std_vals_all,
+        )
+        _save_metric_values(
+            os.path.join(table_dir, f"bonus_ratio_values_with_online{policy_suffix}.csv"),
+            bonus_ratio_vals_all,
+        )
+        _save_kv(
+            os.path.join(table_dir, f"bonus_mean_pvalues_with_online{policy_suffix}.csv"),
+            bonus_mean_p_all,
+        )
+        _save_kv(
+            os.path.join(table_dir, f"bonus_std_pvalues_with_online{policy_suffix}.csv"),
+            bonus_std_p_all,
+        )
+        _save_kv(
+            os.path.join(table_dir, f"bonus_ratio_pvalues_with_online{policy_suffix}.csv"),
+            bonus_ratio_p_all,
+        )
 
 def main():
     parser = argparse.ArgumentParser()
@@ -1070,30 +1021,31 @@ def main():
     parser.add_argument("--device", default=None, help="Override device, e.g., cpu or cuda:0")
     parser.add_argument("--force-retrain", action="store_true", help="Force CRTR retraining.")
     parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Override output directory (relative to repo root unless absolute).",
+    )
+    parser.add_argument(
         "--envs",
         default=None,
         help="Comma-separated env ids to run (e.g., periodicity,teacup_large).",
     )
     parser.add_argument("--only-large", action="store_true", help="Run only *_large envs.")
     parser.add_argument("--only-small", action="store_true", help="Run only base (non-_large) envs.")
-    parser.add_argument(
-        "--reps",
-        default=None,
-        help=(
-            "Comma-separated reps to run for PPO: "
-            "coord_only,coord_plus_nuisance,crtr_learned,idm_learned,crtr_online_joint,idm_online_joint"
-        ),
-    )
     parser.add_argument("--goal-only", action="store_true", help="Run only goal (extrinsic) PPO.")
     parser.add_argument(
         "--intrinsic-only", action="store_true", help="Run only intrinsic-only PPO."
     )
     parser.add_argument(
-        "--policy-input",
-        choices=["rep", "raw"],
-        default="rep",
-        help="PPO policy input: representation embedding (rep) or raw observation (raw).",
+        "--policy-inputs",
+        default="rep,raw",
+        help="Comma-separated PPO policy inputs to run: rep,raw (default: rep,raw).",
     )
+    parser.add_argument("--use-alpha-anneal", action="store_true", help="Enable success-based alpha annealing.")
+    parser.add_argument("--use-alpha-gate", action="store_true", help="Enable per-episode alpha gating.")
+    parser.add_argument("--use-two-critic", action="store_true", help="Enable separate ext/int critics.")
+    parser.add_argument("--use-int-norm", action="store_true", help="Normalize intrinsic reward by running std.")
+    parser.add_argument("--int-clip", type=float, default=0.0, help="Clip normalized intrinsic reward.")
     args = parser.parse_args()
 
     base_cfg = StudyConfig()
@@ -1101,10 +1053,18 @@ def main():
         apply_fast_cfg(base_cfg)
     if args.device:
         base_cfg.device = args.device
+    if args.output_dir:
+        base_cfg.output_dir = args.output_dir
+    base_cfg.ppo_use_alpha_anneal = bool(args.use_alpha_anneal)
+    base_cfg.ppo_use_alpha_gate = bool(args.use_alpha_gate)
+    base_cfg.ppo_use_two_critic = bool(args.use_two_critic)
+    base_cfg.ppo_use_int_norm = bool(args.use_int_norm)
+    base_cfg.ppo_int_clip = float(args.int_clip)
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.dirname(base_dir)
-    base_cfg.output_dir = os.path.join(repo_root, base_cfg.output_dir)
+    if not os.path.isabs(base_cfg.output_dir):
+        base_cfg.output_dir = os.path.join(repo_root, base_cfg.output_dir)
 
     device = torch.device(base_cfg.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     if base_cfg.require_cuda and device.type != "cuda":
@@ -1136,27 +1096,20 @@ def main():
     if not env_specs:
         raise ValueError("No environments selected. Check --envs/--only-large/--only-small.")
 
-    args.reps_set = None
-    if args.reps:
-        requested = {s.strip() for s in args.reps.split(",") if s.strip()}
-        known_reps = {
-            "coord_only",
-            "coord_plus_nuisance",
-            "crtr_learned",
-            "idm_learned",
-            "crtr_online_joint",
-            "idm_online_joint",
-        }
-        missing = requested - known_reps
-        if missing:
-            known = ", ".join(sorted(known_reps))
-            raise ValueError(f"Unknown reps: {sorted(missing)}. Known: {known}")
-        args.reps_set = requested
+    policy_inputs = [s.strip() for s in args.policy_inputs.split(",") if s.strip()]
+    if not policy_inputs:
+        raise ValueError("No PPO policy inputs selected. Use --policy-inputs rep,raw.")
+    bad_inputs = {p for p in policy_inputs if p not in {"rep", "raw"}}
+    if bad_inputs:
+        raise ValueError(f"Unknown policy inputs: {sorted(bad_inputs)}. Use rep,raw.")
+    args.policy_inputs_list = policy_inputs
 
     for env_spec in env_specs:
-        cfg = copy.deepcopy(base_cfg)
-        _apply_env_spec(cfg, env_spec)
-        _run_env(cfg, env_spec, device, args)
+        for policy_input in args.policy_inputs_list:
+            cfg = copy.deepcopy(base_cfg)
+            _apply_env_spec(cfg, env_spec)
+            args.policy_input = policy_input
+            _run_env(cfg, env_spec, device, args)
         continue
         env_id = env_spec["id"]
         env_name = env_spec["name"]

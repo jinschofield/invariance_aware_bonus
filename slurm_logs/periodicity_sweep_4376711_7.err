@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/usr/lib64/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib64/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/home/js6726/invariance_aware/periodicity_study/run_study.py", line 1576, in <module>
+    main()
+  File "/home/js6726/invariance_aware/periodicity_study/run_study.py", line 1112, in main
+    _run_env(cfg, env_spec, device, args)
+  File "/home/js6726/invariance_aware/periodicity_study/run_study.py", line 380, in _run_env
+    success_plot: str | None = None,
+TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'

@@ -76,4 +76,10 @@ class StudyConfig:
     ppo_alpha_eta: float = 1.0
     ppo_alpha_rho: float = 0.05
     ppo_alpha_zero_after_hit: bool = False
+    ppo_use_alpha_anneal: bool = False
+    ppo_use_alpha_gate: bool = False
+    ppo_use_two_critic: bool = False
+    ppo_use_int_norm: bool = False
+    ppo_int_clip: float = 0.0
     ppo_int_norm_eps: float = 1e-8
+    bonus_gif_policy_input: str = "rep"

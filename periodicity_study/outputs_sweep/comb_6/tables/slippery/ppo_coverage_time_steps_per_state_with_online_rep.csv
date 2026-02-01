@@ -1,0 +1,7 @@
+metric,value
+coord_only,70.62068965517241
+coord_plus_nuisance,353.1034482758621
+crtr_learned,353.1034482758621
+idm_learned,70.62068965517241
+crtr_online_joint,70.62068965517241
+idm_online_joint,70.62068965517241

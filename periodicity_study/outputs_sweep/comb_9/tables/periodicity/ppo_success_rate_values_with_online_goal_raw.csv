@@ -1,0 +1,7 @@
+metric,value
+coord_only_goal,0.11079545454545454
+coord_plus_nuisance_goal,0.125
+crtr_learned_goal,0.1590909090909091
+idm_learned_goal,0.16193181818181818
+crtr_online_joint_goal,0.15056818181818182
+idm_online_joint_goal,0.14204545454545456

@@ -1,0 +1,16 @@
+metric,value
+coord_only_vs_coord_plus_nuisance,1.0
+coord_only_vs_crtr_learned,1.0
+coord_only_vs_idm_learned,1.0
+coord_only_vs_crtr_online_joint,1.0
+coord_only_vs_idm_online_joint,1.0
+coord_plus_nuisance_vs_crtr_learned,2.89368747858898e-05
+coord_plus_nuisance_vs_idm_learned,0.2852270730713622
+coord_plus_nuisance_vs_crtr_online_joint,0.00015386728233357516
+coord_plus_nuisance_vs_idm_online_joint,2.0657146926339465e-07
+crtr_learned_vs_idm_learned,1.0
+crtr_learned_vs_crtr_online_joint,1.0
+crtr_learned_vs_idm_online_joint,0.5110471610728009
+idm_learned_vs_crtr_online_joint,0.014824984555695364
+idm_learned_vs_idm_online_joint,0.0002292420514764526
+crtr_online_joint_vs_idm_online_joint,0.11956782964013635

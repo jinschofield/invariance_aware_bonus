@@ -1,0 +1,7 @@
+metric,value
+coord_only,40.96
+coord_plus_nuisance,40.96
+crtr_learned,40.96
+idm_learned,40.96
+crtr_online_joint,40.96
+idm_online_joint,40.96

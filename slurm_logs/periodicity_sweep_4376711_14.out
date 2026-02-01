@@ -1,0 +1,14 @@
+Sweep flags:  --use-two-critic --use-alpha-gate --use-int-norm
+    train step   5000/20000 | loss=5.2729
+    train step  10000/20000 | loss=5.2484
+    train step  15000/20000 | loss=5.2415
+    train step  20000/20000 | loss=5.2585
+    train step   5000/20000 | loss=1.1051
+    train step  10000/20000 | loss=0.8984
+    train step  15000/20000 | loss=0.8220
+    train step  20000/20000 | loss=0.7513
+
+=== Periodicity (periodicity) ===
+Stage 1: Representation invariance metrics
+Stage 2: Elliptical bonus metrics + heatmaps
+Stage 3: PPO action distribution invariance (bonus-only)

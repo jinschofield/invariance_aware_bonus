@@ -11,8 +11,9 @@ from ti.utils import seed_everything
 
 
 class ActorCritic(nn.Module):
-    def __init__(self, input_dim: int, n_actions: int, hidden_dim: int):
+    def __init__(self, input_dim: int, n_actions: int, hidden_dim: int, two_critic: bool = False):
         super().__init__()
+        self.two_critic = bool(two_critic)
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.Tanh(),
@@ -20,18 +21,25 @@ class ActorCritic(nn.Module):
             nn.Tanh(),
         )
         self.policy_head = nn.Linear(hidden_dim, n_actions)
-        self.value_head_ext = nn.Linear(hidden_dim, 1)
-        self.value_head_int = nn.Linear(hidden_dim, 1)
+        if self.two_critic:
+            self.value_head_ext = nn.Linear(hidden_dim, 1)
+            self.value_head_int = nn.Linear(hidden_dim, 1)
+        else:
+            self.value_head = nn.Linear(hidden_dim, 1)
 
     def forward(self, x):
         h = self.encoder(x)
         logits = self.policy_head(h)
-        value_ext = self.value_head_ext(h).squeeze(-1)
-        value_int = self.value_head_int(h).squeeze(-1)
-        return logits, value_ext, value_int
+        if self.two_critic:
+            value_ext = self.value_head_ext(h).squeeze(-1)
+            value_int = self.value_head_int(h).squeeze(-1)
+            return logits, value_ext, value_int
+        value = self.value_head(h).squeeze(-1)
+        return logits, value
 
     def action_probs(self, x: torch.Tensor) -> torch.Tensor:
-        logits, _, _ = self.forward(x)
+        out = self.forward(x)
+        logits = out[0]
         return torch.softmax(logits, dim=-1)
 
 
@@ -112,7 +120,12 @@ def train_ppo(
 
     if policy_input_dim is None:
         policy_input_dim = int(rep.dim)
-    model = ActorCritic(policy_input_dim, cfg.n_actions, cfg.ppo_hidden_dim).to(device)
+    use_two_critic = bool(getattr(cfg, "ppo_use_two_critic", False))
+    if use_extrinsic and use_two_critic:
+        use_two_critic = False
+    model = ActorCritic(
+        policy_input_dim, cfg.n_actions, cfg.ppo_hidden_dim, two_critic=use_two_critic
+    ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.ppo_lr)
 
     bonus = EpisodicEllipticalBonus(
@@ -146,11 +159,17 @@ def train_ppo(
     int_count = 0
     int_mean = 0.0
     int_m2 = 0.0
+    use_alpha_anneal = bool(getattr(cfg, "ppo_use_alpha_anneal", False))
+    use_alpha_gate = bool(getattr(cfg, "ppo_use_alpha_gate", False)) or bool(
+        getattr(cfg, "ppo_alpha_zero_after_hit", False)
+    )
+    use_int_norm = bool(getattr(cfg, "ppo_use_int_norm", False))
+    int_clip = float(getattr(cfg, "ppo_int_clip", 0.0))
     int_eps = float(getattr(cfg, "ppo_int_norm_eps", 1e-8))
     alpha0 = float(getattr(cfg, "ppo_alpha0", 1.0))
     alpha_eta = float(getattr(cfg, "ppo_alpha_eta", 1.0))
     alpha_rho = float(getattr(cfg, "ppo_alpha_rho", 0.05))
-    alpha_zero_after_hit = bool(getattr(cfg, "ppo_alpha_zero_after_hit", False))
+    alpha_zero_after_hit = use_alpha_gate
 
     goal = torch.tensor(maze_cfg["goal"], device=device, dtype=torch.long)
 
@@ -158,23 +177,45 @@ def train_ppo(
         obs_buf = torch.zeros((steps_per_update, cfg.ppo_num_envs, policy_input_dim), device=device)
         actions_buf = torch.zeros((steps_per_update, cfg.ppo_num_envs), device=device, dtype=torch.long)
         logprobs_buf = torch.zeros((steps_per_update, cfg.ppo_num_envs), device=device)
-        values_ext_buf = torch.zeros((steps_per_update, cfg.ppo_num_envs), device=device)
-        values_int_buf = torch.zeros((steps_per_update, cfg.ppo_num_envs), device=device)
+        values_buf = (
+            torch.zeros((steps_per_update, cfg.ppo_num_envs), device=device)
+            if not use_two_critic
+            else None
+        )
+        values_ext_buf = (
+            torch.zeros((steps_per_update, cfg.ppo_num_envs), device=device)
+            if use_two_critic
+            else None
+        )
+        values_int_buf = (
+            torch.zeros((steps_per_update, cfg.ppo_num_envs), device=device)
+            if use_two_critic
+            else None
+        )
         rewards_ext_buf = torch.zeros((steps_per_update, cfg.ppo_num_envs), device=device)
         rewards_int_buf = torch.zeros((steps_per_update, cfg.ppo_num_envs), device=device)
         dones_buf = torch.zeros((steps_per_update, cfg.ppo_num_envs), device=device)
         alpha_mask_buf = (
             torch.ones((steps_per_update, cfg.ppo_num_envs), device=device)
-            if alpha_zero_after_hit
+            if (alpha_zero_after_hit and use_extrinsic)
             else None
         )
-        hit_mask = torch.zeros((cfg.ppo_num_envs,), device=device, dtype=torch.bool)
+        hit_mask = (
+            torch.zeros((cfg.ppo_num_envs,), device=device, dtype=torch.bool)
+            if alpha_mask_buf is not None
+            else None
+        )
 
         for t in range(steps_per_update):
             with torch.no_grad():
                 rep_obs = rep.encode(obs).detach()
                 policy_obs = rep_obs if policy_obs_fn is None else policy_obs_fn(obs, rep_obs)
-                logits, values_ext, values_int = model(policy_obs)
+                out = model(policy_obs)
+                logits = out[0]
+                if use_two_critic:
+                    values_ext, values_int = out[1], out[2]
+                else:
+                    values = out[1]
                 dist = Categorical(logits=logits)
                 actions = dist.sample()
                 logprobs = dist.log_prob(actions)
@@ -196,8 +237,11 @@ def train_ppo(
             obs_buf[t] = policy_obs
             actions_buf[t] = actions
             logprobs_buf[t] = logprobs
-            values_ext_buf[t] = values_ext
-            values_int_buf[t] = values_int
+            if use_two_critic:
+                values_ext_buf[t] = values_ext
+                values_int_buf[t] = values_int
+            else:
+                values_buf[t] = values
             rewards_ext_buf[t] = rewards_ext
             rewards_int_buf[t] = rewards_int
             dones_buf[t] = done.float()
@@ -221,22 +265,38 @@ def train_ppo(
         with torch.no_grad():
             rep_obs = rep.encode(obs).detach()
             policy_obs = rep_obs if policy_obs_fn is None else policy_obs_fn(obs, rep_obs)
-            _, next_value_ext, next_value_int = model(policy_obs)
+            out = model(policy_obs)
+            if use_two_critic:
+                next_value_ext, next_value_int = out[1], out[2]
+            else:
+                next_value = out[1]
 
         rewards_int_flat = rewards_int_buf.reshape(-1)
-        if int_count > 1:
-            int_sigma = float((int_m2 / max(1, int_count - 1)) ** 0.5)
+        if use_int_norm:
+            if int_count > 1:
+                int_sigma = float((int_m2 / max(1, int_count - 1)) ** 0.5)
+            else:
+                int_sigma = float(rewards_int_flat.std(unbiased=False).item())
+            int_sigma = max(int_sigma, int_eps)
+            rewards_int_norm = rewards_int_buf / float(int_sigma)
+            int_count, int_mean, int_m2 = _update_running_stats(
+                int_count, int_mean, int_m2, rewards_int_flat
+            )
         else:
-            int_sigma = float(rewards_int_flat.std(unbiased=False).item())
-        int_sigma = max(int_sigma, int_eps)
-        rewards_int_norm = rewards_int_buf / float(int_sigma)
+            int_sigma = 1.0
+            rewards_int_norm = rewards_int_buf
+        if int_clip > 0:
+            rewards_int_norm = rewards_int_norm.clamp(-float(int_clip), float(int_clip))
 
         rollout_success = float((rewards_ext_buf > 0).any().item()) if use_extrinsic else 0.0
         if use_extrinsic:
-            p_succ_hat = (1.0 - alpha_rho) * p_succ_hat + alpha_rho * rollout_success
-            alpha = alpha0 * ((1.0 - p_succ_hat) ** alpha_eta)
+            if use_alpha_anneal:
+                p_succ_hat = (1.0 - alpha_rho) * p_succ_hat + alpha_rho * rollout_success
+                alpha = alpha0 * ((1.0 - p_succ_hat) ** alpha_eta)
+            else:
+                alpha = alpha0
         else:
-            alpha = 1.0
+            alpha = alpha0
 
         success_rate = float("nan")
         if use_extrinsic:
@@ -247,39 +307,49 @@ def train_ppo(
         else:
             alpha_t = alpha * alpha_mask_buf
 
-        adv_ext, ret_ext = _compute_gae(
-            rewards_ext_buf,
-            values_ext_buf,
-            dones_buf,
-            next_value_ext,
-            cfg.ppo_gamma,
-            cfg.ppo_gae_lambda,
-        )
-        adv_int, ret_int = _compute_gae(
-            rewards_int_norm,
-            values_int_buf,
-            dones_buf,
-            next_value_int,
-            cfg.ppo_gamma,
-            cfg.ppo_gae_lambda,
-        )
-
-        adv = adv_ext + alpha_t * adv_int
         ret_mix = rewards_ext_buf + alpha_t * rewards_int_norm
-        int_count, int_mean, int_m2 = _update_running_stats(
-            int_count, int_mean, int_m2, rewards_int_flat
-        )
+        if use_two_critic:
+            adv_ext, ret_ext = _compute_gae(
+                rewards_ext_buf,
+                values_ext_buf,
+                dones_buf,
+                next_value_ext,
+                cfg.ppo_gamma,
+                cfg.ppo_gae_lambda,
+            )
+            adv_int, ret_int = _compute_gae(
+                rewards_int_norm,
+                values_int_buf,
+                dones_buf,
+                next_value_int,
+                cfg.ppo_gamma,
+                cfg.ppo_gae_lambda,
+            )
+            adv = adv_ext + alpha_t * adv_int
+        else:
+            adv, ret = _compute_gae(
+                ret_mix,
+                values_buf,
+                dones_buf,
+                next_value,
+                cfg.ppo_gamma,
+                cfg.ppo_gae_lambda,
+            )
 
         adv = (adv - adv.mean()) / (adv.std(unbiased=False) + 1e-8)
 
         b_obs = obs_buf.reshape(-1, policy_input_dim)
         b_actions = actions_buf.reshape(-1)
         b_logprobs = logprobs_buf.reshape(-1)
-        b_returns_ext = ret_ext.reshape(-1)
-        b_returns_int = ret_int.reshape(-1)
         b_adv = adv.reshape(-1)
-        b_values_ext = values_ext_buf.reshape(-1)
-        b_values_int = values_int_buf.reshape(-1)
+        if use_two_critic:
+            b_returns_ext = ret_ext.reshape(-1)
+            b_returns_int = ret_int.reshape(-1)
+            b_values_ext = values_ext_buf.reshape(-1)
+            b_values_int = values_int_buf.reshape(-1)
+        else:
+            b_returns = ret.reshape(-1)
+            b_values = values_buf.reshape(-1)
 
         n_batch = b_obs.shape[0]
         mb_size = min(int(cfg.ppo_minibatch_size), n_batch)
@@ -288,7 +358,12 @@ def train_ppo(
             idx = torch.randperm(n_batch, device=device)
             for start in range(0, n_batch, mb_size):
                 mb = idx[start : start + mb_size]
-                logits, values_ext, values_int = model(b_obs[mb])
+                out = model(b_obs[mb])
+                logits = out[0]
+                if use_two_critic:
+                    values_ext, values_int = out[1], out[2]
+                else:
+                    values = out[1]
                 dist = Categorical(logits=logits)
                 new_logprobs = dist.log_prob(b_actions[mb])
                 ratio = (new_logprobs - b_logprobs[mb]).exp()
@@ -299,9 +374,12 @@ def train_ppo(
                 )
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                v_loss_ext = ((values_ext - b_returns_ext[mb]) ** 2).mean()
-                v_loss_int = ((values_int - b_returns_int[mb]) ** 2).mean()
-                v_loss = v_loss_ext + v_loss_int
+                if use_two_critic:
+                    v_loss_ext = ((values_ext - b_returns_ext[mb]) ** 2).mean()
+                    v_loss_int = ((values_int - b_returns_int[mb]) ** 2).mean()
+                    v_loss = v_loss_ext + v_loss_int
+                else:
+                    v_loss = ((values - b_returns[mb]) ** 2).mean()
                 entropy = dist.entropy().mean()
 
                 loss = pg_loss + cfg.ppo_vf_coef * v_loss - cfg.ppo_ent_coef * entropy
@@ -326,6 +404,7 @@ def train_ppo(
                 "p_succ_hat": float(p_succ_hat),
                 "int_sigma": float(int_sigma),
                 "success_rate": float(success_rate),
+                "two_critic": float(use_two_critic),
             }
         )
 
