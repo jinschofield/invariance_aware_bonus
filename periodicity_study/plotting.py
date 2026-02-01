@@ -174,6 +174,7 @@ def plot_multi_timeseries(
     x_key: str = "env_steps",
     x_label: Optional[str] = None,
     hline_y: Optional[float] = 1.0,
+    xscale: Optional[str] = None,
 ):
     fig, ax = plt.subplots(figsize=(7, 4))
     for name, rows in series_by_rep.items():
@@ -188,8 +189,34 @@ def plot_multi_timeseries(
     ax.set_ylabel(y_label)
     if hline_y is not None:
         ax.axhline(hline_y, color="gray", linestyle="--", linewidth=1.0, alpha=0.6)
+    if xscale:
+        ax.set_xscale(xscale)
     ax.grid(alpha=0.3)
     ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_heatmap_fixed(
+    heatmap: torch.Tensor,
+    title: str,
+    out_path: str,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    cmap: str = "viridis",
+):
+    data = heatmap.detach().cpu().numpy()
+    mask = np.isnan(data)
+    data = np.ma.masked_where(mask, data)
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+    im = ax.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.set_title(title)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    fig.colorbar(im, ax=ax, shrink=0.8)
+    _format_x_ticks(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)

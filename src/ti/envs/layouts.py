@@ -1,12 +1,78 @@
 import math
+from collections import deque
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
 
+def make_bottleneck_layout(maze_size: int, device: torch.device) -> torch.Tensor:
+    layout = np.ones((maze_size, maze_size), dtype=bool)
+    layout[1:-1, 1:-1] = False
+
+    # Add vertical walls with single-cell gaps.
+    v_cols = list(range(3, maze_size - 3, 4))
+    for i, c in enumerate(v_cols):
+        layout[1:-1, c] = True
+        gap = 1 + ((i * 7) % (maze_size - 2))
+        layout[gap, c] = False
+
+    # Add horizontal walls with single-cell gaps.
+    h_rows = list(range(3, maze_size - 3, 4))
+    for j, r in enumerate(h_rows):
+        layout[r, 1:-1] = True
+        gap = 1 + ((j * 5) % (maze_size - 2))
+        layout[r, gap] = False
+
+    # Ensure common start/goal cells are free.
+    layout[1, 1] = False
+    layout[maze_size - 2, maze_size - 2] = False
+
+    def _components(mask: np.ndarray):
+        visited = np.zeros_like(mask, dtype=bool)
+        comps = []
+        for r in range(mask.shape[0]):
+            for c in range(mask.shape[1]):
+                if mask[r, c] and not visited[r, c]:
+                    q = deque([(r, c)])
+                    visited[r, c] = True
+                    comp = [(r, c)]
+                    while q:
+                        x, y = q.popleft()
+                        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                            nx, ny = x + dx, y + dy
+                            if 0 <= nx < mask.shape[0] and 0 <= ny < mask.shape[1]:
+                                if mask[nx, ny] and not visited[nx, ny]:
+                                    visited[nx, ny] = True
+                                    q.append((nx, ny))
+                                    comp.append((nx, ny))
+                    comps.append(comp)
+        return comps
+
+    def _carve_path(a, b):
+        ar, ac = a
+        br, bc = b
+        for r in range(min(ar, br), max(ar, br) + 1):
+            layout[r, ac] = False
+        for c in range(min(ac, bc), max(ac, bc) + 1):
+            layout[br, c] = False
+
+    free = ~layout
+    comps = _components(free)
+    while len(comps) > 1:
+        comps.sort(key=len, reverse=True)
+        a = comps[0][0]
+        b = comps[1][0]
+        _carve_path(a, b)
+        free = ~layout
+        comps = _components(free)
+
+    return torch.tensor(layout, device=device, dtype=torch.bool)
+
+
 def make_layout(maze_size: int, device: torch.device) -> torch.Tensor:
     if maze_size != 12:
-        return make_open_plate_layout(maze_size, device)
+        return make_bottleneck_layout(maze_size, device)
 
     layout = torch.tensor(
         [

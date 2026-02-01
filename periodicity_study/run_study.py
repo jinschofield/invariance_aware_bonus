@@ -12,6 +12,7 @@ if REPO_ROOT not in sys.path:
 import copy
 import numpy as np
 import torch
+import imageio.v2 as imageio
 
 from ti.data.buffer import build_episode_index_strided
 from ti.data.collect import collect_offline_dataset
@@ -34,6 +35,7 @@ from periodicity_study.plotting import (
     plot_bar,
     plot_bar_values,
     plot_heatmap,
+    plot_heatmap_fixed,
     plot_heatmap_diff,
     plot_timeseries,
     plot_multi_timeseries,
@@ -283,6 +285,13 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             cfg, device, model_dir, force_retrain=args.force_retrain, buf=buf, epi=epi
         ),
     }
+    bonus_gif_env = getattr(cfg, "bonus_gif_env_id", "periodicity")
+    bonus_gif_rep = getattr(cfg, "bonus_gif_rep", "crtr_learned")
+    bonus_gif_every = int(getattr(cfg, "bonus_gif_every_updates", 2))
+    bonus_gif_max = int(getattr(cfg, "bonus_gif_max_frames", 50))
+    bonus_gif_fps = int(getattr(cfg, "bonus_gif_fps", 3))
+    bonus_gif_frames = []
+    bonus_gif_heatmaps = []
     selected_reps = getattr(args, "reps_set", None)
     if selected_reps is not None:
         reps = {k: v for k, v in reps.items() if k in selected_reps}
@@ -480,6 +489,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             x_key="steps_per_state",
             x_label="Steps per free state",
             hline_y=100.0,
+            xscale="log",
         )
 
         coverage_threshold = float(getattr(cfg, "coverage_threshold", 0.99))
@@ -555,6 +565,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
                 y_label="Success rate",
                 x_key="env_steps",
                 hline_y=None,
+                xscale="log",
             )
 
     run_goal = bool(getattr(args, "goal_only", False))
@@ -579,6 +590,16 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
                 metrics["steps_per_state"] = float(env_steps) / max(1, free_count)
                 cov = float(metrics.get("coverage_fraction", float("nan")))
                 metrics["coverage_percent"] = cov * 100.0 if np.isfinite(cov) else float("nan")
+                if (
+                    env_id == bonus_gif_env
+                    and run_name == bonus_gif_rep
+                    and not use_extrinsic
+                    and update % bonus_gif_every == 0
+                    and len(bonus_gif_heatmaps) < bonus_gif_max
+                    and eval_buf.size >= int(cfg.online_eval_min_buffer)
+                ):
+                    h_mean, _ = build_bonus_heatmaps(rep, eval_buf, cfg, device, env_id)
+                    bonus_gif_heatmaps.append(h_mean.detach().cpu())
                 return metrics
 
             policy, logs, metrics_log = train_ppo(
@@ -649,6 +670,26 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         success_time_plot="ppo_success_rate_over_time_goal",
         success_values="ppo_success_rate_values_goal",
     )
+
+    if bonus_gif_heatmaps:
+        frames_dir = os.path.join(fig_dir, "bonus_evolution_frames")
+        ensure_dir(frames_dir)
+        heat_np = torch.stack(bonus_gif_heatmaps, dim=0).numpy()
+        vmin = float(np.nanmin(heat_np))
+        vmax = float(np.nanmax(heat_np))
+        for idx, heat in enumerate(bonus_gif_heatmaps):
+            frame_path = os.path.join(frames_dir, f"bonus_{idx:04d}.png")
+            plot_heatmap_fixed(
+                heat,
+                title=_with_env_title(f"Elliptical bonus (t={idx})", env_label),
+                out_path=frame_path,
+                vmin=vmin,
+                vmax=vmax,
+            )
+            bonus_gif_frames.append(frame_path)
+        gif_path = os.path.join(fig_dir, "bonus_evolution.gif")
+        images = [imageio.imread(p) for p in bonus_gif_frames]
+        imageio.mimsave(gif_path, images, duration=1.0 / max(1, bonus_gif_fps))
 
     print("Stage 4: Online joint representations + bonus + PPO")
     online_rep = init_online_crtr(cfg, device)

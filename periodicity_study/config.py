@@ -53,6 +53,12 @@ class StudyConfig:
     online_rep_warmup_steps: int = 4096
     online_rep_buffer_size: int = 0
 
+    bonus_gif_env_id: str = "periodicity"
+    bonus_gif_rep: str = "crtr_learned"
+    bonus_gif_every_updates: int = 2
+    bonus_gif_max_frames: int = 50
+    bonus_gif_fps: int = 3
+
     ppo_num_envs: int = 32
     ppo_total_steps: int = 200000
     ppo_steps_per_update: int = 128
