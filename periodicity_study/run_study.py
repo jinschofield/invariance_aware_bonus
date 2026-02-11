@@ -42,7 +42,9 @@ from periodicity_study.plotting import (
 )
 from periodicity_study.ppo import train_ppo
 from periodicity_study.representations import (
+    CoordNuisanceRadiusPadRep,
     CoordNuisanceRep,
+    CoordOnlyRadiusPadRep,
     CoordOnlyRep,
     handcrafted_rep_collision_report,
     init_online_crtr,
@@ -281,9 +283,23 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
     handcrafted_only = bool(getattr(args, "handcrafted_only", False))
     run_online_joint = not handcrafted_only
 
-    coord_only = maybe_project_handcrafted_rep(CoordOnlyRep(), cfg, tag=f"{env_id}:coord_only")
+    pad_dim = int(getattr(cfg, "handcrafted_pad_dim", 0))
+    use_radius = bool(getattr(cfg, "handcrafted_use_radius", False))
+    if use_radius and pad_dim <= 0:
+        pad_dim = 8
+    if pad_dim > 0 and not use_radius:
+        raise ValueError("--handcrafted-pad-dim requires --handcrafted-use-radius.")
+    if pad_dim > 0:
+        coord_only_base = CoordOnlyRadiusPadRep(pad_dim=pad_dim)
+        coord_plus_base = CoordNuisanceRadiusPadRep(env_id, nuis_count, device, pad_dim=pad_dim)
+    else:
+        coord_only_base = CoordOnlyRep()
+        coord_plus_base = CoordNuisanceRep(env_id, nuis_count, device)
+    coord_only = maybe_project_handcrafted_rep(
+        coord_only_base, cfg, tag=f"{env_id}:coord_only"
+    )
     coord_plus = maybe_project_handcrafted_rep(
-        CoordNuisanceRep(env_id, nuis_count, device), cfg, tag=f"{env_id}:coord_plus_nuisance"
+        coord_plus_base, cfg, tag=f"{env_id}:coord_plus_nuisance"
     )
     reps = {"coord_only": coord_only, "coord_plus_nuisance": coord_plus}
     if not handcrafted_only:
@@ -1119,6 +1135,22 @@ def main():
     parser.add_argument("--use-int-norm", action="store_true", help="Normalize intrinsic reward by running std.")
     parser.add_argument("--int-clip", type=float, default=0.0, help="Clip normalized intrinsic reward.")
     parser.add_argument(
+        "--handcrafted-pad-dim",
+        type=int,
+        default=0,
+        help="Pad handcrafted reps to this dim (0 disables).",
+    )
+    parser.add_argument(
+        "--handcrafted-use-radius",
+        action="store_true",
+        help="Add radius feature and L2-normalize padded handcrafted reps.",
+    )
+    parser.add_argument("--z-dim", type=int, default=0, help="Override representation latent dim.")
+    parser.add_argument("--hidden-dim", type=int, default=0, help="Override rep hidden dim.")
+    parser.add_argument("--ppo-hidden-dim", type=int, default=0, help="Override PPO hidden dim.")
+    parser.add_argument("--ppo-total-steps", type=int, default=0, help="Override PPO total steps.")
+    parser.add_argument("--max-ep-steps", type=int, default=0, help="Override env episode length.")
+    parser.add_argument(
         "--handcrafted-proj-mode",
         default=None,
         choices=["none", "randproj_l2"],
@@ -1172,6 +1204,18 @@ def main():
     base_cfg.ppo_use_two_critic = bool(args.use_two_critic)
     base_cfg.ppo_use_int_norm = bool(args.use_int_norm)
     base_cfg.ppo_int_clip = float(args.int_clip)
+    base_cfg.handcrafted_pad_dim = int(args.handcrafted_pad_dim)
+    base_cfg.handcrafted_use_radius = bool(args.handcrafted_use_radius)
+    if int(args.z_dim) > 0:
+        base_cfg.z_dim = int(args.z_dim)
+    if int(args.hidden_dim) > 0:
+        base_cfg.hidden_dim = int(args.hidden_dim)
+    if int(args.ppo_hidden_dim) > 0:
+        base_cfg.ppo_hidden_dim = int(args.ppo_hidden_dim)
+    if int(args.ppo_total_steps) > 0:
+        base_cfg.ppo_total_steps = int(args.ppo_total_steps)
+    if int(args.max_ep_steps) > 0:
+        base_cfg.max_ep_steps = int(args.max_ep_steps)
     if args.handcrafted_proj_mode is not None:
         base_cfg.handcrafted_proj_mode = str(args.handcrafted_proj_mode)
     if int(args.handcrafted_proj_dim) > 0:

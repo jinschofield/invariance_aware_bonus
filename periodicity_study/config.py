@@ -90,3 +90,5 @@ class StudyConfig:
     handcrafted_proj_dim: int = 0
     handcrafted_proj_seed: int = 0
     handcrafted_proj_check_collisions: bool = True
+    handcrafted_pad_dim: int = 0
+    handcrafted_use_radius: bool = False

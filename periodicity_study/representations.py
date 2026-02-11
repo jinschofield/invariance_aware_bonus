@@ -76,6 +76,57 @@ class CoordNuisanceRep(BaseRepresentation):
         return torch.cat([obs[:, :2], nuis_idx], dim=1)
 
 
+def _pad_and_normalize(z: torch.Tensor, out_dim: int) -> torch.Tensor:
+    out_dim = int(out_dim)
+    if z.shape[1] > out_dim:
+        raise ValueError(f"Cannot pad to smaller dim: {z.shape[1]} > {out_dim}")
+    if z.shape[1] < out_dim:
+        zeros = torch.zeros(
+            (z.shape[0], out_dim - z.shape[1]), device=z.device, dtype=z.dtype
+        )
+        z = torch.cat([z, zeros], dim=1)
+    return F.normalize(z, dim=-1, eps=1e-8)
+
+
+class CoordOnlyRadiusPadRep(BaseRepresentation):
+    def __init__(self, pad_dim: int):
+        pad_dim = int(pad_dim)
+        if pad_dim < 3:
+            raise ValueError("pad_dim must be >= 3 for coord_only + radius.")
+        super().__init__(name="coord_only", dim=pad_dim)
+        self.pad_dim = pad_dim
+
+    def encode(self, obs: torch.Tensor) -> torch.Tensor:
+        xy = obs[:, :2]
+        r = torch.norm(xy, dim=1, keepdim=True)
+        z = torch.cat([xy, r], dim=1)
+        return _pad_and_normalize(z, self.pad_dim)
+
+
+class CoordNuisanceRadiusPadRep(BaseRepresentation):
+    def __init__(self, env_id: str, period: int, device: torch.device, pad_dim: int):
+        pad_dim = int(pad_dim)
+        if pad_dim < 4:
+            raise ValueError("pad_dim must be >= 4 for coord+nuisance+radius.")
+        super().__init__(name="coord_plus_nuisance", dim=pad_dim)
+        self.env_id = env_id
+        self.period = int(period)
+        self.device = device
+        self.pad_dim = pad_dim
+
+    def encode(self, obs: torch.Tensor) -> torch.Tensor:
+        xy = obs[:, :2]
+        r = torch.norm(xy, dim=1, keepdim=True)
+        if self.env_id.startswith("slippery"):
+            nuis_idx = _decode_slippery_index(obs).float().unsqueeze(1)
+        elif self.env_id.startswith("teacup"):
+            nuis_idx = _decode_teacup_phase(obs, self.device).float().unsqueeze(1)
+        else:
+            nuis_idx = _decode_phase_index(obs, self.period).float().unsqueeze(1)
+        z = torch.cat([xy, nuis_idx, r], dim=1)
+        return _pad_and_normalize(z, self.pad_dim)
+
+
 def _stable_text_hash(text: str) -> int:
     h = 2166136261
     for ch in text:
