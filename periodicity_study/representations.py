@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 import torch
+import torch.nn.functional as F
 
 from ti.data.buffer import build_episode_index_strided
 from ti.data.collect import collect_offline_dataset
@@ -11,7 +12,12 @@ from ti.envs import layouts
 from ti.models.rep_methods import OfflineRepLearner
 from ti.utils import seed_everything
 
-from periodicity_study.common import ensure_dir, maze_cfg_from_config
+from periodicity_study.common import (
+    build_obs_from_pos_nuisance,
+    ensure_dir,
+    free_positions_for_env,
+    maze_cfg_from_config,
+)
 
 
 def _decode_phase_index(obs: torch.Tensor, period: int) -> torch.Tensor:
@@ -68,6 +74,68 @@ class CoordNuisanceRep(BaseRepresentation):
         else:
             nuis_idx = _decode_phase_index(obs, self.period).float().unsqueeze(1)
         return torch.cat([obs[:, :2], nuis_idx], dim=1)
+
+
+def _stable_text_hash(text: str) -> int:
+    h = 2166136261
+    for ch in text:
+        h = (h ^ ord(ch)) * 16777619
+        h &= 0xFFFFFFFF
+    return int(h)
+
+
+class FixedRandomProjectionRep(BaseRepresentation):
+    def __init__(self, base: BaseRepresentation, out_dim: int, seed: int, tag: str = ""):
+        super().__init__(name=base.name, dim=int(out_dim))
+        self.base = base
+        self.out_dim = int(out_dim)
+        base_dim = int(base.dim)
+        if self.out_dim <= 0:
+            raise ValueError("out_dim must be > 0")
+        key = f"{base.name}:{tag}:{base_dim}->{self.out_dim}"
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed(int(seed) + _stable_text_hash(key))
+        w = torch.randn((base_dim, self.out_dim), generator=gen)
+        w = w / max(1.0, float(base_dim) ** 0.5)
+        self.w = w
+
+    def encode(self, obs: torch.Tensor) -> torch.Tensor:
+        z = self.base.encode(obs)
+        w = self.w.to(device=z.device, dtype=z.dtype)
+        zp = z @ w
+        return F.normalize(zp, dim=-1, eps=1e-8)
+
+
+def maybe_project_handcrafted_rep(rep: BaseRepresentation, cfg, tag: str) -> BaseRepresentation:
+    mode = str(getattr(cfg, "handcrafted_proj_mode", "randproj_l2")).strip().lower()
+    if mode in {"none", "off", "disabled"}:
+        return rep
+    if mode == "randproj_l2":
+        out_dim = int(getattr(cfg, "handcrafted_proj_dim", 0))
+        if out_dim <= 0:
+            out_dim = int(getattr(cfg, "z_dim", rep.dim))
+        seed = int(getattr(cfg, "handcrafted_proj_seed", 0) or getattr(cfg, "seed", 0))
+        return FixedRandomProjectionRep(rep, out_dim=out_dim, seed=seed, tag=tag)
+    raise ValueError(f"Unknown handcrafted projection mode: {mode}")
+
+
+def handcrafted_rep_collision_report(
+    rep: BaseRepresentation, cfg, env_id: str, nuis_count: int, device: torch.device
+) -> dict:
+    maze_cfg = maze_cfg_from_config(cfg)
+    free = free_positions_for_env(env_id, int(maze_cfg["maze_size"]), device)
+    zs = []
+    for n in range(int(nuis_count)):
+        nuis = torch.full((free.shape[0],), n, device=device, dtype=torch.long)
+        obs = build_obs_from_pos_nuisance(env_id, free, nuis, maze_cfg, device)
+        zs.append(rep.encode(obs).detach().cpu())
+    z_all = torch.cat(zs, dim=0)
+    unique = torch.unique(z_all, dim=0)
+    return {
+        "total_pairs": int(z_all.shape[0]),
+        "unique_pairs": int(unique.shape[0]),
+        "collision_count": int(z_all.shape[0] - unique.shape[0]),
+    }
 
 
 class CRTRRep(BaseRepresentation):

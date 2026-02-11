@@ -44,8 +44,10 @@ from periodicity_study.ppo import train_ppo
 from periodicity_study.representations import (
     CoordNuisanceRep,
     CoordOnlyRep,
+    handcrafted_rep_collision_report,
     init_online_crtr,
     init_online_idm,
+    maybe_project_handcrafted_rep,
     train_or_load_crtr,
     train_or_load_idm,
 )
@@ -276,18 +278,33 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         policy_input_dim = None
     policy_suffix = f"_{policy_input}"
 
-    reps = {
-        "coord_only": CoordOnlyRep(),
-        "coord_plus_nuisance": CoordNuisanceRep(env_id, nuis_count, device),
-        "crtr_learned": train_or_load_crtr(
+    handcrafted_only = bool(getattr(args, "handcrafted_only", False))
+    run_online_joint = not handcrafted_only
+
+    coord_only = maybe_project_handcrafted_rep(CoordOnlyRep(), cfg, tag=f"{env_id}:coord_only")
+    coord_plus = maybe_project_handcrafted_rep(
+        CoordNuisanceRep(env_id, nuis_count, device), cfg, tag=f"{env_id}:coord_plus_nuisance"
+    )
+    reps = {"coord_only": coord_only, "coord_plus_nuisance": coord_plus}
+    if not handcrafted_only:
+        reps["crtr_learned"] = train_or_load_crtr(
             cfg, device, model_dir, force_retrain=args.force_retrain, buf=buf, epi=epi
-        ),
-        "idm_learned": train_or_load_idm(
+        )
+        reps["idm_learned"] = train_or_load_idm(
             cfg, device, model_dir, force_retrain=args.force_retrain, buf=buf, epi=epi
-        ),
-    }
+        )
+    if bool(getattr(cfg, "handcrafted_proj_check_collisions", True)):
+        for key in ("coord_only", "coord_plus_nuisance"):
+            col = handcrafted_rep_collision_report(reps[key], cfg, env_id, nuis_count, device)
+            if col["collision_count"] > 0:
+                print(
+                    f"[WARN] {env_id}:{key} collisions={col['collision_count']} "
+                    f"(unique={col['unique_pairs']}/{col['total_pairs']})"
+                )
     bonus_gif_env = getattr(cfg, "bonus_gif_env_id", "periodicity")
     bonus_gif_rep = getattr(cfg, "bonus_gif_rep", "crtr_learned")
+    if bonus_gif_rep not in reps:
+        bonus_gif_rep = "coord_only"
     bonus_gif_every = int(getattr(cfg, "bonus_gif_every_updates", 2))
     bonus_gif_max = int(getattr(cfg, "bonus_gif_max_frames", 50))
     bonus_gif_fps = int(getattr(cfg, "bonus_gif_fps", 3))
@@ -583,22 +600,23 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
         images = [imageio.imread(p) for p in bonus_gif_frames]
         imageio.mimsave(gif_path, images, duration=1.0 / max(1, bonus_gif_fps))
 
-    policy_inputs = [policy_input]
-    for policy_input in policy_inputs:
-        if policy_input == "raw":
-            policy_obs_fn = lambda obs, rep_obs: obs
-            policy_input_dim = int(cfg.obs_dim)
-        else:
-            policy_obs_fn = None
-            policy_input_dim = None
-        policy_suffix = f"_{policy_input}"
+    if run_online_joint:
+        policy_inputs = [policy_input]
+        for policy_input in policy_inputs:
+            if policy_input == "raw":
+                policy_obs_fn = lambda obs, rep_obs: obs
+                policy_input_dim = int(cfg.obs_dim)
+            else:
+                policy_obs_fn = None
+                policy_input_dim = None
+            policy_suffix = f"_{policy_input}"
 
-        print(f"Stage 4: Online joint representations + bonus + PPO ({policy_input})")
-        online_rep = init_online_crtr(cfg, device)
-        rep_buf_size = int(cfg.online_rep_buffer_size)
-        if rep_buf_size <= 0:
-            rep_buf_size = int(cfg.ppo_total_steps) * int(cfg.ppo_num_envs)
-        rep_buf = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
+            print(f"Stage 4: Online joint representations + bonus + PPO ({policy_input})")
+            online_rep = init_online_crtr(cfg, device)
+            rep_buf_size = int(cfg.online_rep_buffer_size)
+            if rep_buf_size <= 0:
+                rep_buf_size = int(cfg.ppo_total_steps) * int(cfg.ppo_num_envs)
+            rep_buf = OnlineReplayBuffer(cfg.obs_dim, rep_buf_size, cfg.ppo_num_envs, device)
 
         def online_eval_cb(update, env_steps, model, rep=online_rep, eval_buf=rep_buf):
             metrics = _eval_levels(
@@ -822,7 +840,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             coverage_series_goal["idm_online_joint_goal"] = idm_metrics_log_goal
 
     action_kl_with_online = dict(action_kl)
-    if not run_goal:
+    if run_online_joint and not run_goal:
         action_kl_with_online["crtr_online_joint"] = action_dist_kl_by_position(
             online_policy, online_rep, cfg, device, env_id, policy_obs_fn=policy_obs_fn
         )
@@ -830,7 +848,7 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             idm_policy, online_idm, cfg, device, env_id, policy_obs_fn=policy_obs_fn
         )
     action_kl_with_online_goal = dict(action_kl_goal)
-    if not run_intrinsic:
+    if run_online_joint and not run_intrinsic:
         action_kl_with_online_goal["crtr_online_joint_goal"] = action_dist_kl_by_position(
             online_policy_goal,
             online_rep_goal,
@@ -847,64 +865,86 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             env_id,
             policy_obs_fn=policy_obs_fn,
         )
+    rep_order = ["coord_only", "coord_plus_nuisance"]
+    if not handcrafted_only:
+        rep_order.extend(["crtr_learned", "idm_learned"])
+    if run_online_joint:
+        rep_order.extend(["crtr_online_joint", "idm_online_joint"])
+    rep_order_goal = [f"{name}_goal" for name in rep_order]
 
-        rep_order = [
-            "coord_only",
-            "coord_plus_nuisance",
-            "crtr_learned",
-            "idm_learned",
-            "crtr_online_joint",
-            "idm_online_joint",
-        ]
-        rep_order_goal = [f"{name}_goal" for name in rep_order]
+    _plot_ppo_summary(
+        coverage_series,
+        action_kl_with_online,
+        coverage_plot=f"ppo_coverage_over_time_with_online{policy_suffix}",
+        coverage_time_steps=f"ppo_coverage_time_steps_with_online{policy_suffix}",
+        coverage_time_steps_per_state=f"ppo_coverage_time_steps_per_state_with_online{policy_suffix}",
+        coverage_time_ratios=f"ppo_coverage_time_ratios_with_online{policy_suffix}",
+        action_kl_plot=f"ppo_action_kl_with_online{policy_suffix}",
+        action_kl_values=f"ppo_action_kl_values_with_online{policy_suffix}",
+        action_kl_pvalues=f"ppo_action_kl_pvalues_with_online{policy_suffix}",
+        compare_suffix=policy_suffix,
+        title_suffix=f" ({policy_input})",
+        coverage_title=(
+            "PPO coverage over time (incl. online CRTR/IDM)"
+            if run_online_joint
+            else "PPO coverage over time"
+        ),
+        coverage_ratio_title=(
+            "PPO coverage time ratios (incl. online)"
+            if run_online_joint
+            else "PPO coverage time ratios"
+        ),
+        action_kl_title=(
+            "Action KL across nuisance (incl. online joint)"
+            if run_online_joint
+            else "Action KL across nuisance"
+        ),
+        rep_order=rep_order,
+    )
+    _plot_ppo_summary(
+        coverage_series_goal,
+        action_kl_with_online_goal,
+        coverage_plot=f"ppo_coverage_over_time_with_online_goal{policy_suffix}",
+        coverage_time_steps=f"ppo_coverage_time_steps_with_online_goal{policy_suffix}",
+        coverage_time_steps_per_state=(
+            f"ppo_coverage_time_steps_per_state_with_online_goal{policy_suffix}"
+        ),
+        coverage_time_ratios=f"ppo_coverage_time_ratios_with_online_goal{policy_suffix}",
+        action_kl_plot=f"ppo_action_kl_with_online_goal{policy_suffix}",
+        action_kl_values=f"ppo_action_kl_values_with_online_goal{policy_suffix}",
+        action_kl_pvalues=f"ppo_action_kl_pvalues_with_online_goal{policy_suffix}",
+        compare_suffix=f"_goal{policy_suffix}",
+        title_suffix=f" + goal ({policy_input})",
+        coverage_title=(
+            "PPO coverage over time (incl. online CRTR/IDM)"
+            if run_online_joint
+            else "PPO coverage over time"
+        ),
+        coverage_ratio_title=(
+            "PPO coverage time ratios (incl. online)"
+            if run_online_joint
+            else "PPO coverage time ratios"
+        ),
+        action_kl_title=(
+            "Action KL across nuisance (incl. online joint)"
+            if run_online_joint
+            else "Action KL across nuisance"
+        ),
+        success_plot=f"ppo_success_rate_by_rep_with_online_goal{policy_suffix}",
+        success_time_plot=f"ppo_success_rate_over_time_with_online_goal{policy_suffix}",
+        success_values=f"ppo_success_rate_values_with_online_goal{policy_suffix}",
+        rep_order=rep_order_goal,
+    )
 
-        _plot_ppo_summary(
-            coverage_series,
-            action_kl_with_online,
-            coverage_plot=f"ppo_coverage_over_time_with_online{policy_suffix}",
-            coverage_time_steps=f"ppo_coverage_time_steps_with_online{policy_suffix}",
-            coverage_time_steps_per_state=f"ppo_coverage_time_steps_per_state_with_online{policy_suffix}",
-            coverage_time_ratios=f"ppo_coverage_time_ratios_with_online{policy_suffix}",
-            action_kl_plot=f"ppo_action_kl_with_online{policy_suffix}",
-            action_kl_values=f"ppo_action_kl_values_with_online{policy_suffix}",
-            action_kl_pvalues=f"ppo_action_kl_pvalues_with_online{policy_suffix}",
-            compare_suffix=policy_suffix,
-            title_suffix=f" ({policy_input})",
-            coverage_title="PPO coverage over time (incl. online CRTR/IDM)",
-            coverage_ratio_title="PPO coverage time ratios (incl. online)",
-            action_kl_title="Action KL across nuisance (incl. online joint)",
-            rep_order=rep_order,
-        )
-        _plot_ppo_summary(
-            coverage_series_goal,
-            action_kl_with_online_goal,
-            coverage_plot=f"ppo_coverage_over_time_with_online_goal{policy_suffix}",
-            coverage_time_steps=f"ppo_coverage_time_steps_with_online_goal{policy_suffix}",
-            coverage_time_steps_per_state=(
-                f"ppo_coverage_time_steps_per_state_with_online_goal{policy_suffix}"
-            ),
-            coverage_time_ratios=f"ppo_coverage_time_ratios_with_online_goal{policy_suffix}",
-            action_kl_plot=f"ppo_action_kl_with_online_goal{policy_suffix}",
-            action_kl_values=f"ppo_action_kl_values_with_online_goal{policy_suffix}",
-            action_kl_pvalues=f"ppo_action_kl_pvalues_with_online_goal{policy_suffix}",
-            compare_suffix=f"_goal{policy_suffix}",
-            title_suffix=f" + goal ({policy_input})",
-            coverage_title="PPO coverage over time (incl. online CRTR/IDM)",
-            coverage_ratio_title="PPO coverage time ratios (incl. online)",
-            action_kl_title="Action KL across nuisance (incl. online joint)",
-            success_plot=f"ppo_success_rate_by_rep_with_online_goal{policy_suffix}",
-            success_time_plot=f"ppo_success_rate_over_time_with_online_goal{policy_suffix}",
-            success_values=f"ppo_success_rate_values_with_online_goal{policy_suffix}",
-            rep_order=rep_order_goal,
-        )
-
+    if run_online_joint and not run_intrinsic:
         rep_metrics_all = dict(rep_metrics)
-        rep_metrics_all["crtr_online_joint"] = rep_invariance_by_position(
-            online_rep, cfg, device, env_id
-        )
-        rep_metrics_all["idm_online_joint"] = rep_invariance_by_position(
-            online_idm, cfg, device, env_id
-        )
+        if run_online_joint:
+            rep_metrics_all["crtr_online_joint"] = rep_invariance_by_position(
+                online_rep, cfg, device, env_id
+            )
+            rep_metrics_all["idm_online_joint"] = rep_invariance_by_position(
+                online_idm, cfg, device, env_id
+            )
         rep_p_all = pairwise_ttests(rep_metrics_all)
         plot_bar(
             rep_metrics_all,
@@ -924,62 +964,65 @@ def _run_env(cfg, env_spec, device: torch.device, args) -> None:
             rep_p_all,
         )
 
-        h_mean_online, h_std_online = build_bonus_heatmaps(online_rep, buf, cfg, device, env_id)
-        plot_heatmap(
-            h_mean_online,
-            title=_with_env_title(
-                f"Elliptical bonus (mean) - crtr_online_joint{policy_suffix}", env_label
-            ),
-            out_path=os.path.join(
-                fig_dir, f"heat_bonus_mean_crtr_online_joint{policy_suffix}.png"
-            ),
-        )
-        plot_heatmap(
-            h_std_online,
-            title=_with_env_title(
-                f"Elliptical bonus (nuisance std) - crtr_online_joint{policy_suffix}", env_label
-            ),
-            out_path=os.path.join(
-                fig_dir, f"heat_bonus_std_crtr_online_joint{policy_suffix}.png"
-            ),
-        )
-        h_mean_idm, h_std_idm = build_bonus_heatmaps(online_idm, buf, cfg, device, env_id)
-        plot_heatmap(
-            h_mean_idm,
-            title=_with_env_title(
-                f"Elliptical bonus (mean) - idm_online_joint{policy_suffix}", env_label
-            ),
-            out_path=os.path.join(
-                fig_dir, f"heat_bonus_mean_idm_online_joint{policy_suffix}.png"
-            ),
-        )
-        plot_heatmap(
-            h_std_idm,
-            title=_with_env_title(
-                f"Elliptical bonus (nuisance std) - idm_online_joint{policy_suffix}", env_label
-            ),
-            out_path=os.path.join(
-                fig_dir, f"heat_bonus_std_idm_online_joint{policy_suffix}.png"
-            ),
-        )
-
         bonus_mean_vals_all = dict(bonus_mean_vals)
         bonus_std_vals_all = dict(bonus_std_vals)
         bonus_ratio_vals_all = dict(bonus_ratio_vals)
-        mask_online = torch.isfinite(h_mean_online)
-        bonus_mean_vals_all["crtr_online_joint"] = h_mean_online[mask_online]
-        bonus_std_vals_all["crtr_online_joint"] = h_std_online[mask_online]
-        between_std_online = h_mean_online[mask_online].std(unbiased=False)
-        bonus_ratio_vals_all["crtr_online_joint"] = h_std_online[mask_online] / (
-            between_std_online + 1e-8
-        )
-        mask_idm = torch.isfinite(h_mean_idm)
-        bonus_mean_vals_all["idm_online_joint"] = h_mean_idm[mask_idm]
-        bonus_std_vals_all["idm_online_joint"] = h_std_idm[mask_idm]
-        between_std_idm = h_mean_idm[mask_idm].std(unbiased=False)
-        bonus_ratio_vals_all["idm_online_joint"] = h_std_idm[mask_idm] / (
-            between_std_idm + 1e-8
-        )
+        if run_online_joint:
+            h_mean_online, h_std_online = build_bonus_heatmaps(online_rep, buf, cfg, device, env_id)
+            plot_heatmap(
+                h_mean_online,
+                title=_with_env_title(
+                    f"Elliptical bonus (mean) - crtr_online_joint{policy_suffix}", env_label
+                ),
+                out_path=os.path.join(
+                    fig_dir, f"heat_bonus_mean_crtr_online_joint{policy_suffix}.png"
+                ),
+            )
+            plot_heatmap(
+                h_std_online,
+                title=_with_env_title(
+                    f"Elliptical bonus (nuisance std) - crtr_online_joint{policy_suffix}",
+                    env_label,
+                ),
+                out_path=os.path.join(
+                    fig_dir, f"heat_bonus_std_crtr_online_joint{policy_suffix}.png"
+                ),
+            )
+            h_mean_idm, h_std_idm = build_bonus_heatmaps(online_idm, buf, cfg, device, env_id)
+            plot_heatmap(
+                h_mean_idm,
+                title=_with_env_title(
+                    f"Elliptical bonus (mean) - idm_online_joint{policy_suffix}", env_label
+                ),
+                out_path=os.path.join(
+                    fig_dir, f"heat_bonus_mean_idm_online_joint{policy_suffix}.png"
+                ),
+            )
+            plot_heatmap(
+                h_std_idm,
+                title=_with_env_title(
+                    f"Elliptical bonus (nuisance std) - idm_online_joint{policy_suffix}",
+                    env_label,
+                ),
+                out_path=os.path.join(
+                    fig_dir, f"heat_bonus_std_idm_online_joint{policy_suffix}.png"
+                ),
+            )
+
+            mask_online = torch.isfinite(h_mean_online)
+            bonus_mean_vals_all["crtr_online_joint"] = h_mean_online[mask_online]
+            bonus_std_vals_all["crtr_online_joint"] = h_std_online[mask_online]
+            between_std_online = h_mean_online[mask_online].std(unbiased=False)
+            bonus_ratio_vals_all["crtr_online_joint"] = h_std_online[mask_online] / (
+                between_std_online + 1e-8
+            )
+            mask_idm = torch.isfinite(h_mean_idm)
+            bonus_mean_vals_all["idm_online_joint"] = h_mean_idm[mask_idm]
+            bonus_std_vals_all["idm_online_joint"] = h_std_idm[mask_idm]
+            between_std_idm = h_mean_idm[mask_idm].std(unbiased=False)
+            bonus_ratio_vals_all["idm_online_joint"] = h_std_idm[mask_idm] / (
+                between_std_idm + 1e-8
+            )
         bonus_mean_p_all = pairwise_ttests(bonus_mean_vals_all)
         bonus_std_p_all = pairwise_ttests(bonus_std_vals_all)
         bonus_ratio_p_all = pairwise_ttests(bonus_ratio_vals_all)
@@ -1065,11 +1108,39 @@ def main():
         default="rep,raw",
         help="Comma-separated PPO policy inputs to run: rep,raw (default: rep,raw).",
     )
+    parser.add_argument(
+        "--handcrafted-only",
+        action="store_true",
+        help="Run only handcrafted reps (coord_only, coord_plus_nuisance).",
+    )
     parser.add_argument("--use-alpha-anneal", action="store_true", help="Enable success-based alpha annealing.")
     parser.add_argument("--use-alpha-gate", action="store_true", help="Enable per-episode alpha gating.")
     parser.add_argument("--use-two-critic", action="store_true", help="Enable separate ext/int critics.")
     parser.add_argument("--use-int-norm", action="store_true", help="Normalize intrinsic reward by running std.")
     parser.add_argument("--int-clip", type=float, default=0.0, help="Clip normalized intrinsic reward.")
+    parser.add_argument(
+        "--handcrafted-proj-mode",
+        default=None,
+        choices=["none", "randproj_l2"],
+        help="Projection mode for handcrafted reps (default from config).",
+    )
+    parser.add_argument(
+        "--handcrafted-proj-dim",
+        type=int,
+        default=0,
+        help="Projection output dim for handcrafted reps (0 uses z_dim).",
+    )
+    parser.add_argument(
+        "--handcrafted-proj-seed",
+        type=int,
+        default=0,
+        help="Seed for handcrafted random projection (0 uses base seed).",
+    )
+    parser.add_argument(
+        "--no-handcrafted-proj-collision-check",
+        action="store_true",
+        help="Disable handcrafted rep collision warnings.",
+    )
     parser.add_argument(
         "--alpha0-auto",
         action="store_true",
@@ -1101,6 +1172,13 @@ def main():
     base_cfg.ppo_use_two_critic = bool(args.use_two_critic)
     base_cfg.ppo_use_int_norm = bool(args.use_int_norm)
     base_cfg.ppo_int_clip = float(args.int_clip)
+    if args.handcrafted_proj_mode is not None:
+        base_cfg.handcrafted_proj_mode = str(args.handcrafted_proj_mode)
+    if int(args.handcrafted_proj_dim) > 0:
+        base_cfg.handcrafted_proj_dim = int(args.handcrafted_proj_dim)
+    if int(args.handcrafted_proj_seed) != 0:
+        base_cfg.handcrafted_proj_seed = int(args.handcrafted_proj_seed)
+    base_cfg.handcrafted_proj_check_collisions = not bool(args.no_handcrafted_proj_collision_check)
     base_cfg.ppo_alpha0_auto = bool(args.alpha0_auto)
     if args.alpha0_c is not None:
         base_cfg.ppo_alpha0_c = float(args.alpha0_c)

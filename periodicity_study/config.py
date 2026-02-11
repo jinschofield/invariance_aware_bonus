@@ -86,3 +86,7 @@ class StudyConfig:
     ppo_int_clip: float = 0.0
     ppo_int_norm_eps: float = 1e-8
     bonus_gif_policy_input: str = "rep"
+    handcrafted_proj_mode: str = "randproj_l2"
+    handcrafted_proj_dim: int = 0
+    handcrafted_proj_seed: int = 0
+    handcrafted_proj_check_collisions: bool = True
