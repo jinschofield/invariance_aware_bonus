@@ -45,3 +45,14 @@ wandb/
 *.zip
 *.ipynb_checkpoints
 notebooks/.ipynb_checkpoints
+
+# Local notebook/runtime artifacts
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+
+# Generated experiment outputs
+periodicity_study/outputs*/
+elliptical_bonus_demo/outputs*/
+slurm_logs/*.out
+slurm_logs/*.err
